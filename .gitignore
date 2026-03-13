@@ -1,0 +1,13 @@
+quest_teleop_mujoco/mujoco_menagerie/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+*.so
+build/
+dist/
+.venv/
+venv/
+.env
+*.log
