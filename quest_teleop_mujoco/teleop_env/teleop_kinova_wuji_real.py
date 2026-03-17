@@ -110,14 +110,7 @@ def _default_arm_scene_path() -> Path:
 
 
 def _default_hand_config_path() -> Path:
-    return (
-        _Path(__file__).resolve().parents[1]
-        / ".."
-        / "wuji-retargeting"
-        / "example"
-        / "config"
-        / "adaptive_analytical_quest3.yaml"
-    )
+    return _Path(__file__).resolve().parent / "adaptive_analytical_quest3.yaml"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -343,7 +336,49 @@ def main() -> None:
     )
 
     if args.disable_arm:
-        raise ValueError("This script currently requires Kinova arm feedback for IK. Remove --disable-arm.")
+        # Hand-only mode: skip Kortex connection entirely.
+        hand, hand_controller = _make_hand_controller(args)
+        latest_hand_qpos = None
+
+        print("Starting hand-only teleoperation loop (arm disabled)...")
+        print(f"  Quest UDP port: {args.port}")
+        print("  Hand side: right")
+        print("Press Ctrl+C to stop.")
+
+        try:
+            while True:
+                loop_start = time.time()
+                packet = _recv_latest_packet(sock)
+
+                if packet is not None:
+                    message = packet.decode("utf-8", errors="ignore")
+                    if retargeter is not None:
+                        landmarks = parse_landmarks(message)
+                        if landmarks is not None:
+                            mediapipe_pts = _landmarks_to_mediapipe(landmarks)
+                            if not np.allclose(mediapipe_pts, 0):
+                                latest_hand_qpos = retargeter.retarget(mediapipe_pts)
+
+                if latest_hand_qpos is not None and hand_controller is not None:
+                    hand_controller.set_joint_target_position(
+                        np.asarray(latest_hand_qpos, dtype=np.float64).reshape(5, 4)
+                    )
+
+                elapsed = time.time() - loop_start
+                sleep_time = _CONTROL_PERIOD_S - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
+        except KeyboardInterrupt:
+            print("\nStopping teleoperation...")
+        finally:
+            if hand is not None:
+                try:
+                    hand.write_joint_enabled(False)
+                except Exception as exc:
+                    print(f"Warning: failed to disable Wuji hand cleanly: {exc}")
+            sock.close()
+        return
 
     with kortex_utilities.DeviceConnection.createTcpConnection(kinova_args) as router, \
          kortex_utilities.DeviceConnection.createUdpConnection(kinova_args) as router_rt:

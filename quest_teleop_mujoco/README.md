@@ -17,9 +17,12 @@
 
 - Quest 3 安装并运行 `hand-tracking-streamer` 应用
 - Quest 与 PC 在同一局域网
-- Python 3.10+
+- Python 3.10+，使用 conda 环境 `teleop`（`conda activate teleop`）
 - MuJoCo (`pip install mujoco`)
-- 实物控制额外需要: Kinova Kortex SDK (`pip install kortex-api`)
+- Wuji Hand 相关额外需要:
+  - `wuji_retargeting` — 手部重定向库（来自 `wuji-retargeting` 仓库）
+  - `wujihandpy` — Wuji Hand 硬件 SDK（实物控制时需要）
+- Kinova 实物控制额外需要: Kinova Kortex SDK (`pip install kortex-api`)
 
 ## 运行命令
 
@@ -48,15 +51,28 @@ PYTHONPATH=/home/hand PYTHONUNBUFFERED=1 python3 teleop_env/teleop_kinova_grippe
 - `--ik-damping 0.001` — IK 阻尼系数
 - `--ik-current-weight 0.1` — IK 当前姿态权重
 
+### Kinova Gen3 + Wuji Hand（仿真）
+
+```bash
+conda activate teleop
+cd /home/hand/teleop/quest_teleop_mujoco
+python teleop_env/teleop_kinova_wuji_sim.py --port 9000
+```
+
 ### Kinova Gen3 + Wuji Hand（实物）
 
 ```bash
+conda activate teleop
 cd /home/hand/teleop/quest_teleop_mujoco
-PYTHONPATH=/home/hand PYTHONUNBUFFERED=1 python3 teleop_env/teleop_kinova_wuji_real.py \
+python teleop_env/teleop_kinova_wuji_real.py \
   --kinova-ip 192.168.1.10 \
-  --port 9000 \
-  --disable-hand   # 仅测试机械臂时加此参数
+  --port 9000
 ```
+
+可选参数:
+- `--disable-arm` — 仅控制手部（不连接 Kinova 臂）
+- `--disable-hand` — 仅控制机械臂（不连接 Wuji 手）
+- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件
 
 ### Piper 单臂（仿真）
 
@@ -92,6 +108,7 @@ quest_teleop_mujoco/
 │   ├── teleop_kinova_gripper_real.py
 │   ├── teleop_kinova_wuji_sim.py
 │   ├── teleop_kinova_wuji_real.py
+│   ├── adaptive_analytical_quest3.yaml  # Wuji 手部重定向配置
 │   ├── teleop.py
 │   ├── teleop_bimanual.py
 │   └── visualize.py

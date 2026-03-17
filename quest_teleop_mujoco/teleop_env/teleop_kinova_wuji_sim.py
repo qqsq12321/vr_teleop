@@ -66,14 +66,7 @@ def _default_scene_path() -> Path:
 
 
 def _default_hand_config_path() -> Path:
-    return (
-        _Path(__file__).resolve().parents[1]
-        / ".."
-        / "wuji-retargeting"
-        / "example"
-        / "config"
-        / "adaptive_analytical_quest3.yaml"
-    )
+    return _Path(__file__).resolve().parent / "adaptive_analytical_quest3.yaml"
 
 
 def _apply_initial_pose(model: mujoco.MjModel, data: mujoco.MjData) -> None:
