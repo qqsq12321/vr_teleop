@@ -5,12 +5,22 @@ build/
 dist/
 wheels/
 *.egg-info
+*.egg-info/
+.eggs/
+*.so
 
 # Virtual environments
 .venv
+.venv/
+venv/
+.env
 
 # IDE / tool files
 .claude/
 
 # MuJoCo logs
 MUJOCO_LOG.TXT
+*.log
+
+# Old path
+quest_teleop_mujoco/mujoco_menagerie/
