@@ -1,3 +1,6 @@
 [submodule "third_party/mujoco_menagerie"]
 	path = third_party/mujoco_menagerie
 	url = git@github.com:wengmister/mujoco_menagerie.git
+[submodule "third_party/AnyDexRetarget"]
+	path = third_party/AnyDexRetarget
+	url = https://gitee.com/gx_robot/AnyDexRetarget.git

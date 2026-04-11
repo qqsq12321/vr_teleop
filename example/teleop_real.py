@@ -1,15 +1,20 @@
-"""Teleoperate a real Kinova Gen3 arm via Quest 3 hand tracking.
+"""Teleoperate a real Kinova Gen3 arm via VR hand tracking.
 
 Supports multiple end-effector configurations via --robot:
   kinova_gripper  Kinova Gen3 + Robotiq 2F-85 gripper
   kinova_wuji     Kinova Gen3 + Wuji dexterous hand (20 DOF)
 
+Input sources (--input-source):
+  quest3          Meta Quest 3 via UDP (default)
+  avp             Apple Vision Pro via avp_stream / Tracking Streamer
+
 The --disable-arm flag enables hand-only mode (kinova_wuji only).
 
 Examples:
     python example/teleop_real.py --robot kinova_gripper --kinova-ip 192.168.1.10
+    python example/teleop_real.py --robot kinova_gripper --input-source avp --avp-ip 192.168.5.32
     python example/teleop_real.py --robot kinova_wuji --kinova-ip 192.168.1.10
-    python example/teleop_real.py --robot kinova_wuji --disable-arm
+    python example/teleop_real.py --robot kinova_wuji --disable-arm --input-source avp --avp-ip 192.168.5.32
 """
 
 from __future__ import annotations
@@ -315,6 +320,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--hand-config", default=None, help="Path to retargeter YAML config.")
     parser.add_argument("--disable-arm", action="store_true", help="Do not send commands to Kinova arm.")
     parser.add_argument("--disable-hand", action="store_true", help="Do not send commands to Wuji hand.")
+    parser.add_argument("--input-source", default="quest3", choices=["quest3", "avp"],
+                        help="Input device: quest3 (UDP, default) or avp (Vision Pro via avp_stream).")
+    parser.add_argument("--avp-ip", default="192.168.1.100",
+                        help="Apple Vision Pro IP address (used with --input-source avp).")
     return parser.parse_args()
 
 
@@ -327,28 +336,53 @@ def _run_hand_only(args: argparse.Namespace) -> None:
     """Run pure hand retargeting without arm control."""
     hand_retargeter = HandRetargeter(args.hand_config, "right")
     hand, hand_controller = _make_hand_controller(args)
-    sock = make_socket(args.port)
+
+    # Input source
+    sock = None
+    avp_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
 
     latest_hand_qpos = None
 
     print("Starting hand-only teleoperation loop (arm disabled)...")
-    print(f"  Quest UDP port: {args.port}")
     print("  Hand side: right")
     print("Press Ctrl+C to stop.")
 
     try:
         while True:
             loop_start = time.time()
-            packet = recv_latest_packet(sock)
 
-            if packet is not None:
-                message = packet.decode("utf-8", errors="ignore")
-                if hand_retargeter.available:
-                    landmarks = parse_right_landmarks(message)
-                    if landmarks is not None:
-                        result = hand_retargeter.retarget(landmarks)
-                        if result is not None:
-                            latest_hand_qpos = result
+            if avp_input is not None:
+                # --- Apple Vision Pro path ---
+                if avp_input.poll():
+                    # Check dual pinch stop gesture
+                    if avp_input.check_dual_pinch_stop():
+                        print("\nStopping teleoperation (dual pinch)...")
+                        break
+
+                    if hand_retargeter.available:
+                        mediapipe_pts = avp_input.get_landmarks_mediapipe("right")
+                        if mediapipe_pts is not None:
+                            result = hand_retargeter._retargeter.retarget(mediapipe_pts)
+                            if result is not None:
+                                latest_hand_qpos = result
+            else:
+                # --- Quest 3 path (unchanged) ---
+                packet = recv_latest_packet(sock)
+                if packet is not None:
+                    message = packet.decode("utf-8", errors="ignore")
+                    if hand_retargeter.available:
+                        landmarks = parse_right_landmarks(message)
+                        if landmarks is not None:
+                            result = hand_retargeter.retarget(landmarks)
+                            if result is not None:
+                                latest_hand_qpos = result
 
             if latest_hand_qpos is not None and hand_controller is not None:
                 hand_controller.set_joint_target_position(
@@ -395,7 +429,16 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
         raise ValueError(f"Site '{_DEFAULT_SITE}' not found in model.")
     base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
 
-    sock = make_socket(args.port)
+    # Input source
+    sock = None
+    avp_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
 
     # Wuji-specific setup
     hand_retargeter = None
@@ -448,7 +491,7 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
             initial_site_quat,
             position_scale=args.position_scale,
             ema_alpha=args.ema_alpha,
-            negate_rot_xy=True,
+            negate_rot_xy=True if args.input_source != "avp" else False,
             base_xmat=base_xmat,
             position_deadband=_WRIST_POS_DEADBAND,
             rotation_deadband_deg=_WRIST_ROT_DEADBAND_DEG,
@@ -480,46 +523,82 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
         try:
             while True:
                 loop_start = time.time()
-                packet = recv_latest_packet(sock)
+                saw_valid_data = False
 
-                if packet is not None:
-                    message = packet.decode("utf-8", errors="ignore")
-                    saw_valid_data = False
+                if avp_input is not None:
+                    # --- Apple Vision Pro path ---
+                    if avp_input.poll():
+                        # Check dual pinch stop gesture
+                        if avp_input.check_dual_pinch_stop():
+                            print("\nStopping teleoperation (dual pinch)...")
+                            break
 
-                    # --- Hand control ---
-                    if is_wuji and hand_retargeter is not None and hand_retargeter.available:
-                        landmarks = parse_right_landmarks(message)
-                        if landmarks is not None:
-                            result = hand_retargeter.retarget(landmarks)
-                            if result is not None:
-                                latest_hand_qpos = result
-                                saw_valid_data = True
-                    elif not is_wuji:
-                        landmarks = parse_right_landmarks(message)
-                        if landmarks is not None:
-                            pinch_distance = pinch_distance_from_landmarks(landmarks)
+                        # Hand control
+                        if is_wuji and hand_retargeter is not None and hand_retargeter.available:
+                            mediapipe_pts = avp_input.get_landmarks_mediapipe("right")
+                            if mediapipe_pts is not None:
+                                result = hand_retargeter._retargeter.retarget(mediapipe_pts)
+                                if result is not None:
+                                    latest_hand_qpos = result
+                                    saw_valid_data = True
+                        elif not is_wuji:
+                            pinch_distance = avp_input.get_pinch_distance("right")
                             if pinch_distance is not None:
                                 latest_gripper_pos = _pinch_to_gripper_position(pinch_distance)
                                 saw_valid_data = True
 
-                    # --- Arm: wrist pose residuals ---
-                    wrist_pose = parse_right_wrist_pose(message)
-                    if wrist_pose is not None:
-                        raw_x, raw_y, raw_z = wrist_pose[0], wrist_pose[1], wrist_pose[2]
-                        wrist_position = (raw_z, raw_y, -raw_x)
-                        wrist_quaternion = (
-                            wrist_pose[5], wrist_pose[4], -wrist_pose[3], wrist_pose[6]
-                        )
-                        robot_position, robot_quaternion = transform_vr_to_robot_pose(
-                            wrist_position, wrist_quaternion
-                        )
-                        saw_valid_data = True
-                        if not tracker.initialized:
-                            print("Captured initial wrist reference pose.")
-                        tracker.update(robot_position, robot_quaternion)
+                        # Arm: wrist pose
+                        # Rz(-90°) from get_wrist_pose + Rz(+90°) CW for
+                        # real _INIT_QPOS[0]=90° base rotation.
+                        wrist = avp_input.get_wrist_pose("right")
+                        if wrist is not None:
+                            from util.avp_input import apply_rz90cw
+                            robot_position, robot_quaternion = apply_rz90cw(*wrist)
+                            saw_valid_data = True
+                            if not tracker.initialized:
+                                print("Captured initial wrist reference pose.")
+                            tracker.update(robot_position, robot_quaternion)
+                else:
+                    # --- Quest 3 path (unchanged) ---
+                    packet = recv_latest_packet(sock)
 
-                    if saw_valid_data:
-                        last_valid_packet_time = loop_start
+                    if packet is not None:
+                        message = packet.decode("utf-8", errors="ignore")
+
+                        # Hand control
+                        if is_wuji and hand_retargeter is not None and hand_retargeter.available:
+                            landmarks = parse_right_landmarks(message)
+                            if landmarks is not None:
+                                result = hand_retargeter.retarget(landmarks)
+                                if result is not None:
+                                    latest_hand_qpos = result
+                                    saw_valid_data = True
+                        elif not is_wuji:
+                            landmarks = parse_right_landmarks(message)
+                            if landmarks is not None:
+                                pinch_distance = pinch_distance_from_landmarks(landmarks)
+                                if pinch_distance is not None:
+                                    latest_gripper_pos = _pinch_to_gripper_position(pinch_distance)
+                                    saw_valid_data = True
+
+                        # Arm: wrist pose residuals
+                        wrist_pose = parse_right_wrist_pose(message)
+                        if wrist_pose is not None:
+                            raw_x, raw_y, raw_z = wrist_pose[0], wrist_pose[1], wrist_pose[2]
+                            wrist_position = (raw_z, raw_y, -raw_x)
+                            wrist_quaternion = (
+                                wrist_pose[5], wrist_pose[4], -wrist_pose[3], wrist_pose[6]
+                            )
+                            robot_position, robot_quaternion = transform_vr_to_robot_pose(
+                                wrist_position, wrist_quaternion
+                            )
+                            saw_valid_data = True
+                            if not tracker.initialized:
+                                print("Captured initial wrist reference pose.")
+                            tracker.update(robot_position, robot_quaternion)
+
+                if saw_valid_data:
+                    last_valid_packet_time = loop_start
 
                 # --- Logging ---
                 now = time.time()

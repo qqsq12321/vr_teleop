@@ -1,6 +1,8 @@
 # VR Teleop
 
-基于 Quest 3 手部追踪的机械臂遥操作系统。配合 [Hand Tracking Streamer](https://github.com/wengmister/quest-wrist-tracker) 应用使用。
+基于 VR 手部追踪的机械臂遥操作系统。支持两种输入设备：
+- **Meta Quest 3** — 配合 [Hand Tracking Streamer](https://github.com/wengmister/quest-wrist-tracker) 应用，通过 UDP 传输
+- **Apple Vision Pro** — 配合 [Tracking Streamer](https://apps.apple.com/us/app/tracking-streamer/id6478969032) 应用，通过 [avp_stream](https://github.com/Improbable-AI/VisionProTeleop) (gRPC) 传输
 
 ## 支持的机器人配置
 
@@ -15,10 +17,16 @@
 
 ## 前置条件
 
-### Quest 端
+### VR 端（任选其一）
 
-- Quest 3 安装并运行 [Hand Tracking Streamer](https://github.com/wengmister/quest-wrist-tracker) 应用
+**Quest 3:**
+- 安装并运行 [Hand Tracking Streamer](https://github.com/wengmister/quest-wrist-tracker) 应用
 - Quest 与 PC 在同一局域网
+
+**Apple Vision Pro:**
+- 安装并运行 [Tracking Streamer](https://apps.apple.com/us/app/tracking-streamer/id6478969032) 应用
+- Vision Pro 与 PC 在同一局域网
+- PC 安装 `avp_stream>=2.50.0`（`pip install avp-stream`）
 
 ### PC 端
 
@@ -40,58 +48,59 @@
 
 ## 运行命令
 
-### Kinova Gen3 + Robotiq 夹爪（仿真）
+### Quest 3 输入（默认）
 
 ```bash
-cd /home/hand/teleop/vr_teleop
-PYTHONPATH=/home/hand PYTHONUNBUFFERED=1 python3 example/teleop_sim.py --robot kinova_gripper --port 9000
-```
+# Kinova + 夹爪（仿真）
+python example/teleop_sim.py --robot kinova_gripper --port 9000
 
-### Kinova Gen3 + Robotiq 夹爪（实物）
+# Kinova + 夹爪（实物）
+python example/teleop_real.py --robot kinova_gripper --kinova-ip 192.168.1.10 --port 9000
 
-```bash
-cd /home/hand/teleop/vr_teleop
-PYTHONPATH=/home/hand PYTHONUNBUFFERED=1 python3 example/teleop_real.py --robot kinova_gripper \
-  --kinova-ip 192.168.1.10 \
-  --port 9000
-```
-
-### Kinova Gen3 + Wuji Hand（仿真）
-
-```bash
-conda activate teleop
-cd /home/hand/teleop/vr_teleop
+# Kinova + Wuji Hand（仿真）
 python example/teleop_sim.py --robot kinova_wuji --port 9000
+
+# Kinova + Wuji Hand（实物）
+python example/teleop_real.py --robot kinova_wuji --kinova-ip 192.168.1.10 --port 9000
+
+# Piper 单臂（仿真）
+python example/teleop_sim.py --robot piper --port 9000
+
+# Aloha 双臂（仿真）
+python example/teleop_sim.py --robot aloha --port 9000
 ```
 
-### Kinova Gen3 + Wuji Hand（实物）
+### Apple Vision Pro 输入
+
+在任意命令后追加 `--input-source avp --avp-ip <Vision Pro IP>`:
 
 ```bash
-conda activate teleop
-cd /home/hand/teleop/vr_teleop
-python example/teleop_real.py --robot kinova_wuji \
-  --kinova-ip 192.168.1.10 \
-  --port 9000
+# Kinova + 夹爪（仿真）
+python example/teleop_sim.py --robot kinova_gripper --input-source avp --avp-ip 192.168.5.32
+
+# Kinova + 夹爪（实物）
+python example/teleop_real.py --robot kinova_gripper --input-source avp --avp-ip 192.168.5.32 --kinova-ip 192.168.1.10
+
+# Kinova + Wuji Hand（仿真）
+python example/teleop_sim.py --robot kinova_wuji --input-source avp --avp-ip 192.168.5.32
+
+# Kinova + Wuji Hand（实物）
+python example/teleop_real.py --robot kinova_wuji --input-source avp --avp-ip 192.168.5.32 --kinova-ip 192.168.1.10
+
+# Aloha 双臂（仿真）
+python example/teleop_sim.py --robot aloha --input-source avp --avp-ip 192.168.5.32
 ```
 
-### Piper 单臂（仿真）
-
-```bash
-cd /home/hand/teleop/vr_teleop
-python3 example/teleop_sim.py --robot piper --port 9000
-```
-
-### Aloha 双臂（仿真）
-
-```bash
-cd /home/hand/teleop/vr_teleop
-python3 example/teleop_sim.py --robot aloha --port 9000
-```
+> 实物模式下，双手捏合保持 3 秒可安全停止程序。
 
 ## 可选参数
 
+输入源:
+- `--input-source quest3|avp` — 输入设备（默认 quest3）
+- `--avp-ip <IP>` — Apple Vision Pro IP 地址（仅 avp 模式）
+
 通用:
-- `--port 9000` — UDP 端口
+- `--port 9000` — Quest 3 UDP 端口
 - `--position-scale` — 手腕位移映射倍率（各机器人有不同默认值）
 - `--ema-alpha 0.8` — EMA 平滑系数
 - `--rot-weight 1.0` — IK 旋转权重
@@ -133,6 +142,7 @@ vr_teleop/
 │   ├── ik.py                       # 逆运动学求解器
 │   ├── quaternion.py               # 四元数运算 + VR→机器人坐标变换
 │   ├── udp_socket.py               # UDP 收发 + Quest 数据包解析
+│   ├── avp_input.py                # Apple Vision Pro 输入适配器（avp_stream 封装）
 │   ├── wrist_tracker.py            # 腕部残差跟踪（EMA 平滑 + deadband）
 │   ├── hand_retarget.py            # 灵巧手重定向（landmarks → 关节角）
 │   └── arm_move_home.py            # Kinova 回 Home 工具脚本
@@ -145,8 +155,14 @@ vr_teleop/
 └── README.md
 ```
 
-## Quest 端设置
+## VR 端设置
 
+### Quest 3
 - IP: PC 的局域网 IP（通过 `hostname -I` 查看）
 - 端口: `9000`
 - 协议: UDP
+
+### Apple Vision Pro
+- 打开 Tracking Streamer 应用，点 Start
+- 记下 Vision Pro 的 IP 地址（设置 → Wi-Fi → 已连接网络）
+- PC 端使用 `--input-source avp --avp-ip <IP>` 连接

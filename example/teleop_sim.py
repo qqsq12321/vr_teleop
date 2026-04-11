@@ -1,4 +1,4 @@
-"""Teleoperate a simulated robot arm via Quest 3 hand tracking (MuJoCo).
+"""Teleoperate a simulated robot arm via VR hand tracking (MuJoCo).
 
 Supports multiple robot configurations via --robot:
   piper          Piper single-arm with pinch gripper
@@ -6,9 +6,14 @@ Supports multiple robot configurations via --robot:
   kinova_wuji    Kinova Gen3 + Wuji dexterous hand (20 DOF)
   aloha          Aloha bimanual (dual 6-DOF arms + grippers)
 
+Input sources (--input-source):
+  quest3         Meta Quest 3 via UDP (default)
+  avp            Apple Vision Pro via avp_stream / Tracking Streamer
+
 Examples:
     python example/teleop_sim.py --robot piper --port 9000
     python example/teleop_sim.py --robot kinova_gripper
+    python example/teleop_sim.py --robot kinova_gripper --input-source avp --avp-ip 192.168.1.100
     python example/teleop_sim.py --robot kinova_wuji --hand-config path/to/config.yaml
     python example/teleop_sim.py --robot aloha --position-scale 3.0
 """
@@ -88,7 +93,8 @@ ROBOT_CONFIGS = {
         "base_body_name": "base_link",
         "base_body_fallback": None,
         "home_qpos": np.array(
-            [0.0, 0.585, 3.14, -1.6, 0.0, -0.861, 1.57], dtype=np.float64
+            [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109, 1.57079633],
+            dtype=np.float64,
         ),
         "position_scale": 1.5,
         "hand_type": "gripper",
@@ -111,6 +117,7 @@ ROBOT_CONFIGS = {
             [0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109, 1.57079633],
             dtype=np.float64,
         ),
+        "negate_rot_xy": True,
         "position_scale": 1.5,
         "hand_type": "wuji",
         "negate_rot_xy": True,
@@ -412,8 +419,16 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
     if base_body_id != -1:
         base_xmat = data.xmat[base_body_id].reshape(3, 3).copy()
 
-    # UDP socket
-    sock = make_socket(args.port)
+    # Input source
+    sock = None
+    avp_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
 
     # Wrist tracker
     tracker = WristTracker(
@@ -421,7 +436,7 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
         initial_site_quat,
         position_scale=args.position_scale,
         ema_alpha=args.ema_alpha,
-        negate_rot_xy=config.get("negate_rot_xy", False),
+        negate_rot_xy=config.get("negate_rot_xy", False) if args.input_source != "avp" else False,
         base_xmat=base_xmat,
     )
 
@@ -442,25 +457,21 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
         while vis.is_running():
             loop_start = time.time()
 
-            # --- Receive packet ---
-            packet = recv_latest_packet(sock)
+            # --- Receive input data ---
+            if avp_input is not None:
+                # --- Apple Vision Pro path ---
+                if avp_input.poll():
+                    # Hand retargeting (wuji)
+                    if hand_type == "wuji" and hand_retargeter is not None and hand_retargeter.available:
+                        mediapipe_pts = avp_input.get_landmarks_mediapipe("right")
+                        if mediapipe_pts is not None:
+                            result = hand_retargeter._retargeter.retarget(mediapipe_pts)
+                            if result is not None:
+                                latest_hand_qpos = result
 
-            if packet is not None:
-                message = packet.decode("utf-8", errors="ignore")
-
-                # --- Hand retargeting from landmarks (wuji) ---
-                if hand_type == "wuji" and hand_retargeter is not None:
-                    landmarks = parse_right_landmarks(message)
-                    if landmarks is not None:
-                        result = hand_retargeter.retarget(landmarks)
-                        if result is not None:
-                            latest_hand_qpos = result
-
-                # --- Gripper from landmarks (gripper type) ---
-                if hand_type == "gripper" and gripper_actuator_id != -1:
-                    landmarks = parse_right_landmarks(message)
-                    if landmarks is not None:
-                        pinch_distance = pinch_distance_from_landmarks(landmarks)
+                    # Gripper from pinch distance
+                    if hand_type == "gripper" and gripper_actuator_id != -1:
+                        pinch_distance = avp_input.get_pinch_distance("right")
                         if pinch_distance is not None:
                             latest_gripper_cmd = _pinch_to_gripper(
                                 pinch_distance,
@@ -468,17 +479,49 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
                                 config["gripper_max"],
                             )
 
-                # --- Arm: wrist pose residuals ---
-                wrist_pose = parse_right_wrist_pose(message)
-                if wrist_pose is not None:
-                    wrist_position = (wrist_pose[0], wrist_pose[1], wrist_pose[2])
-                    wrist_quaternion = (
-                        wrist_pose[3], wrist_pose[4], wrist_pose[5], wrist_pose[6]
-                    )
-                    robot_position, robot_quaternion = transform_vr_to_robot_pose(
-                        wrist_position, wrist_quaternion
-                    )
-                    tracker.update(robot_position, robot_quaternion)
+                    # Arm: wrist pose
+                    wrist = avp_input.get_wrist_pose("right")
+                    if wrist is not None:
+                        robot_position, robot_quaternion = wrist
+                        tracker.update(robot_position, robot_quaternion)
+            else:
+                # --- Quest 3 path (unchanged) ---
+                packet = recv_latest_packet(sock)
+
+                if packet is not None:
+                    message = packet.decode("utf-8", errors="ignore")
+
+                    # Hand retargeting from landmarks (wuji)
+                    if hand_type == "wuji" and hand_retargeter is not None:
+                        landmarks = parse_right_landmarks(message)
+                        if landmarks is not None:
+                            result = hand_retargeter.retarget(landmarks)
+                            if result is not None:
+                                latest_hand_qpos = result
+
+                    # Gripper from landmarks (gripper type)
+                    if hand_type == "gripper" and gripper_actuator_id != -1:
+                        landmarks = parse_right_landmarks(message)
+                        if landmarks is not None:
+                            pinch_distance = pinch_distance_from_landmarks(landmarks)
+                            if pinch_distance is not None:
+                                latest_gripper_cmd = _pinch_to_gripper(
+                                    pinch_distance,
+                                    config["pinch_max_distance"],
+                                    config["gripper_max"],
+                                )
+
+                    # Arm: wrist pose residuals
+                    wrist_pose = parse_right_wrist_pose(message)
+                    if wrist_pose is not None:
+                        wrist_position = (wrist_pose[0], wrist_pose[1], wrist_pose[2])
+                        wrist_quaternion = (
+                            wrist_pose[3], wrist_pose[4], wrist_pose[5], wrist_pose[6]
+                        )
+                        robot_position, robot_quaternion = transform_vr_to_robot_pose(
+                            wrist_position, wrist_quaternion
+                        )
+                        tracker.update(robot_position, robot_quaternion)
 
             # --- Logging ---
             now = time.time()
@@ -547,6 +590,67 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# AVP helper for bimanual ArmController
+# ---------------------------------------------------------------------------
+
+
+def _update_arm_from_avp(arm: ArmController, avp_input, side: str) -> None:
+    """Update an ArmController from AVP input (mirrors arm.update for Quest)."""
+    # Gripper from pinch distance
+    if arm.gripper_actuator_id != -1:
+        pinch = avp_input.get_pinch_distance(side)
+        if pinch is not None:
+            arm.latest_gripper_cmd = pinch_to_gripper(pinch)
+
+    # Wrist pose
+    wrist = avp_input.get_wrist_pose(side)
+    if wrist is not None:
+        robot_position, robot_quaternion = wrist
+        if arm.initial_wrist_position is None:
+            arm.initial_wrist_position = robot_position
+            arm.initial_wrist_quaternion = robot_quaternion
+        else:
+            residual = np.array(
+                [
+                    robot_position[0] - arm.initial_wrist_position[0],
+                    robot_position[1] - arm.initial_wrist_position[1],
+                    robot_position[2] - arm.initial_wrist_position[2],
+                ],
+                dtype=np.float64,
+            )
+            if arm.base_xmat is not None:
+                residual = arm.base_xmat @ residual
+            if arm.smoothed_residual is None:
+                arm.smoothed_residual = residual
+            else:
+                arm.smoothed_residual = (
+                    arm.args.ema_alpha * residual
+                    + (1.0 - arm.args.ema_alpha) * arm.smoothed_residual
+                )
+            arm.target_position = (
+                arm.initial_site_pos + arm.args.position_scale * arm.smoothed_residual
+            )
+            relative_quaternion = quaternion_multiply(
+                robot_quaternion,
+                quaternion_inverse(arm.initial_wrist_quaternion),
+            )
+            arm.target_quaternion = np.array(
+                quaternion_multiply(relative_quaternion, arm.initial_site_quat),
+                dtype=np.float64,
+            )
+            norm = np.linalg.norm(arm.target_quaternion)
+            if norm > 0.0:
+                arm.target_quaternion /= norm
+            arm.latest_residual = arm.smoothed_residual
+            arm.latest_euler_residual = quaternion_to_euler_xyz(
+                relative_quaternion[0],
+                relative_quaternion[1],
+                relative_quaternion[2],
+                relative_quaternion[3],
+            )
+
+
+# ---------------------------------------------------------------------------
 # Aloha bimanual simulation loop
 # ---------------------------------------------------------------------------
 
@@ -564,19 +668,35 @@ def _run_bimanual(config: dict, args: argparse.Namespace) -> None:
     left_arm = ArmController(model, data, ik_data, "left", args)
     right_arm = ArmController(model, data, ik_data, "right", args)
 
-    sock = make_socket(args.port)
+    # Input source
+    sock = None
+    avp_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
 
     last_log_time = time.time()
 
     with viewer.launch_passive(model, data) as vis:
         while vis.is_running():
-            try:
-                sock_data, _ = sock.recvfrom(4096)
-                message = sock_data.decode("utf-8", errors="ignore")
-                left_arm.update(message)
-                right_arm.update(message)
-            except BlockingIOError:
-                pass
+            if avp_input is not None:
+                # --- Apple Vision Pro path ---
+                if avp_input.poll():
+                    _update_arm_from_avp(left_arm, avp_input, "left")
+                    _update_arm_from_avp(right_arm, avp_input, "right")
+            else:
+                # --- Quest 3 path (unchanged) ---
+                try:
+                    sock_data, _ = sock.recvfrom(4096)
+                    message = sock_data.decode("utf-8", errors="ignore")
+                    left_arm.update(message)
+                    right_arm.update(message)
+                except BlockingIOError:
+                    pass
 
             q_left = left_arm.step_ik()
             q_right = right_arm.step_ik()
@@ -660,6 +780,17 @@ def main() -> None:
         type=float,
         default=0.1,
         help="Weight for penalizing deviation from current pose in IK.",
+    )
+    parser.add_argument(
+        "--input-source",
+        default="quest3",
+        choices=["quest3", "avp"],
+        help="Input device: quest3 (UDP, default) or avp (Vision Pro via avp_stream).",
+    )
+    parser.add_argument(
+        "--avp-ip",
+        default="192.168.1.100",
+        help="Apple Vision Pro IP address (used with --input-source avp).",
     )
     args = parser.parse_args()
 
