@@ -1,8 +1,9 @@
 # VR Teleop
 
-基于 VR 手部追踪的机械臂遥操作系统。支持两种输入设备：
+基于 VR 手部追踪的机械臂遥操作系统。支持三种输入设备：
 - **Meta Quest 3** — 配合 [Hand Tracking Streamer](https://github.com/wengmister/quest-wrist-tracker) 应用，通过 UDP 传输
 - **Apple Vision Pro** — 配合 [Tracking Streamer](https://apps.apple.com/us/app/tracking-streamer/id6478969032) 应用，通过 [avp_stream](https://github.com/Improbable-AI/VisionProTeleop) (gRPC) 传输
+- **Pico 4** — 配合 `pico_relay_daemon`，通过本机 relay TCP 或直连 TCP 传输
 
 ## 支持的机器人配置
 
@@ -32,6 +33,11 @@
 - 安装并运行 [Tracking Streamer](https://apps.apple.com/us/app/tracking-streamer/id6478969032) 应用
 - Vision Pro 与 PC 在同一局域网
 - PC 安装 `avp_stream>=2.50.0`（`pip install avp-stream`）
+
+**Pico 4:**
+- 启动 Pico 4 手部追踪数据发送端
+- 推荐在 PC 端启动 `pico_relay_daemon`，默认监听 `127.0.0.1:63902`
+- 也可使用 direct 模式，由 PC 监听 TCP `63901` 并通过 UDP `29888` 广播地址
 
 ### PC 端
 
@@ -134,6 +140,33 @@ python example/teleop_real.py --robot rm65_inspire --input-source avp --avp-ip 1
 python example/teleop_sim.py --robot aloha --input-source avp --avp-ip 192.168.5.32
 ```
 
+### Pico 4 输入
+
+relay 模式默认连接 `127.0.0.1:63902`：
+
+```bash
+# Kinova + 夹爪（仿真）
+python example/teleop_sim.py --robot kinova_gripper --input-source pico4
+
+# Kinova + Wuji Hand（仿真）
+python example/teleop_sim.py --robot kinova_wuji --input-source pico4
+
+# Kinova + Wuji Hand（仿真，vector 优化器）
+python example/teleop_sim.py --robot kinova_wuji --input-source pico4 --hand-config config/pico4/vector/pico4_wuji_hand.yaml
+
+# RM65 + Inspire Hand（仿真）
+python example/teleop_sim.py --robot rm65_inspire --input-source pico4
+
+# Aloha 双臂（仿真）
+python example/teleop_sim.py --robot aloha --input-source pico4
+```
+
+direct 模式：
+
+```bash
+python example/teleop_sim.py --robot kinova_gripper --input-source pico4 --pico4-mode direct --pico4-port 63901
+```
+
 停止方式说明：
 
 - Apple Vision Pro 实物路径当前支持左手握拳保持约 3 秒停止
@@ -142,8 +175,13 @@ python example/teleop_sim.py --robot aloha --input-source avp --avp-ip 192.168.5
 ## 可选参数
 
 输入源:
-- `--input-source quest3|avp` — 输入设备（默认 quest3）
+- `--input-source quest3|avp|pico4` — 输入设备（默认 quest3）
 - `--avp-ip <IP>` — Apple Vision Pro IP 地址（仅 avp 模式）
+- `--pico4-mode relay|direct` — Pico 4 输入模式（默认 relay）
+- `--pico4-relay-host 127.0.0.1` — Pico 4 relay 主机
+- `--pico4-relay-port 63902` — Pico 4 relay 端口
+- `--pico4-port 63901` — Pico 4 direct 模式 TCP 端口
+- `--pico4-broadcast-port 29888` — Pico 4 direct 模式 UDP 广播端口
 
 通用:
 - `--port 9000` — Quest 3 UDP 端口
@@ -185,6 +223,8 @@ python3 viz/visualize.py example/scene/scene_kinova_gen3.xml
 
 ```
 vr_teleop/
+├── config/                      # 本项目自有配置
+│   └── pico4/                      # Pico 4 手部重定向配置
 ├── example/                     # 遥操作入口脚本
 │   ├── teleop_sim.py               # 仿真遥操作（MuJoCo viewer）
 │   ├── teleop_real.py              # 实物遥操作（Kortex SDK）
@@ -194,6 +234,7 @@ vr_teleop/
 │   ├── quaternion.py               # 四元数运算 + VR→机器人坐标变换
 │   ├── udp_socket.py               # UDP 收发 + Quest 数据包解析
 │   ├── avp_input.py                # Apple Vision Pro 输入适配器（avp_stream 封装）
+│   ├── pico4_input.py              # Pico 4 输入适配器（relay/direct TCP）
 │   ├── wrist_tracker.py            # 腕部残差跟踪（EMA 平滑 + deadband）
 │   ├── hand_retarget.py            # 灵巧手重定向（landmarks → 关节角）
 │   └── arm_move_home.py            # Kinova 回 Home 工具脚本
@@ -219,3 +260,7 @@ vr_teleop/
 - 打开 Tracking Streamer 应用，点 Start
 - 记下 Vision Pro 的 IP 地址（设置 → Wi-Fi → 已连接网络）
 - PC 端使用 `--input-source avp --avp-ip <IP>` 连接
+
+### Pico 4
+- relay 模式：确认 `pico_relay_daemon` 正在运行，PC 端使用 `--input-source pico4`
+- direct 模式：PC 端使用 `--input-source pico4 --pico4-mode direct`，Pico 4 端连接 PC 广播出来的地址

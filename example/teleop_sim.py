@@ -51,7 +51,11 @@ from util.udp_socket import (
     pinch_distance_from_landmarks,
 )
 from util.wrist_tracker import WristTracker
-from util.hand_retarget import HandRetargeter, default_inspire_config_path
+from util.hand_retarget import (
+    HandRetargeter,
+    default_inspire_config_path,
+    default_pico4_config_path,
+)
 
 # ---------------------------------------------------------------------------
 # Scene / config paths
@@ -187,6 +191,16 @@ def _pinch_to_gripper(
     """
     ratio = clamp_pinch_ratio(pinch_distance, pinch_max)
     return gripper_max * ratio if inverted else gripper_max * (1.0 - ratio)
+
+
+def _resolve_hand_config(args: argparse.Namespace, hand_type: str) -> str | None:
+    if args.hand_config:
+        return args.hand_config
+    if args.input_source == "pico4" and hand_type in ("wuji", "inspire"):
+        return str(default_pico4_config_path(hand_type))
+    if hand_type == "inspire":
+        return str(default_inspire_config_path())
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -432,10 +446,9 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
     # Load retargeter for wuji or inspire hand
     hand_retargeter = None
     if hand_type == "wuji":
-        hand_retargeter = HandRetargeter(args.hand_config, args.hand_side)
+        hand_retargeter = HandRetargeter(_resolve_hand_config(args, hand_type), args.hand_side)
     elif hand_type == "inspire":
-        inspire_cfg = args.hand_config if args.hand_config else str(default_inspire_config_path())
-        hand_retargeter = HandRetargeter(inspire_cfg, args.hand_side)
+        hand_retargeter = HandRetargeter(_resolve_hand_config(args, hand_type), args.hand_side)
 
     # Initial EE state
     mujoco.mj_forward(model, data)
@@ -458,10 +471,21 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
     # Input source
     sock = None
     avp_input = None
+    pico4_input = None
     if args.input_source == "avp":
         from util.avp_input import AVPInput
         avp_input = AVPInput(ip=args.avp_ip)
         print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
     else:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
@@ -472,7 +496,7 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
         initial_site_quat,
         position_scale=args.position_scale,
         ema_alpha=args.ema_alpha,
-        negate_rot_xy=config.get("negate_rot_xy", False) if args.input_source != "avp" else False,
+        negate_rot_xy=config.get("negate_rot_xy", False) if args.input_source == "quest3" else False,
         base_xmat=base_xmat,
     )
 
@@ -522,6 +546,32 @@ def _run_single_arm(config: dict, args: argparse.Namespace) -> None:
                     if wrist is not None:
                         robot_position, robot_quaternion = wrist
                         tracker.update(robot_position, robot_quaternion)
+            elif pico4_input is not None:
+                # --- Pico 4 path ---
+                # Hand retargeting (wuji / inspire)
+                if hand_type in ("wuji", "inspire") and hand_retargeter is not None and hand_retargeter.available:
+                    mediapipe_pts = pico4_input.get_landmarks_mediapipe("right")
+                    if mediapipe_pts is not None:
+                        result = hand_retargeter.retarget_mediapipe(mediapipe_pts)
+                        if result is not None:
+                            latest_hand_qpos = result
+
+                # Gripper from pinch distance
+                if hand_type == "gripper" and gripper_actuator_id != -1:
+                    pinch_distance = pico4_input.get_pinch_distance("right")
+                    if pinch_distance is not None:
+                        latest_gripper_cmd = _pinch_to_gripper(
+                            pinch_distance,
+                            config["pinch_max_distance"],
+                            config["gripper_max"],
+                            inverted=config.get("pinch_inverted", False),
+                        )
+
+                # Arm: wrist pose
+                wrist = pico4_input.get_wrist_pose("right")
+                if wrist is not None:
+                    robot_position, robot_quaternion = wrist
+                    tracker.update(robot_position, robot_quaternion)
             else:
                 # --- Quest 3 path (unchanged) ---
                 packet = recv_latest_packet(sock)
@@ -656,10 +706,21 @@ def _run_bimanual(config: dict, args: argparse.Namespace) -> None:
     # Input source
     sock = None
     avp_input = None
+    pico4_input = None
     if args.input_source == "avp":
         from util.avp_input import AVPInput
         avp_input = AVPInput(ip=args.avp_ip)
         print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
     else:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
@@ -676,6 +737,13 @@ def _run_bimanual(config: dict, args: argparse.Namespace) -> None:
                         wrist = avp_input.get_wrist_pose(side)
                         if wrist is not None:
                             arm.update_from_pose(*wrist)
+            elif pico4_input is not None:
+                # --- Pico 4 path ---
+                for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                    arm.update_gripper_from_pinch(pico4_input.get_pinch_distance(side))
+                    wrist = pico4_input.get_wrist_pose(side)
+                    if wrist is not None:
+                        arm.update_from_pose(*wrist)
             else:
                 # --- Quest 3 path (unchanged) ---
                 try:
@@ -772,13 +840,42 @@ def main() -> None:
     parser.add_argument(
         "--input-source",
         default="quest3",
-        choices=["quest3", "avp"],
-        help="Input device: quest3 (UDP, default) or avp (Vision Pro via avp_stream).",
+        choices=["quest3", "avp", "pico4"],
+        help="Input device: quest3 (UDP, default), avp (Vision Pro), or pico4.",
     )
     parser.add_argument(
         "--avp-ip",
         default="192.168.1.100",
         help="Apple Vision Pro IP address (used with --input-source avp).",
+    )
+    parser.add_argument(
+        "--pico4-mode",
+        default="relay",
+        choices=["relay", "direct"],
+        help="Pico 4 input mode: relay daemon (default) or direct TCP server.",
+    )
+    parser.add_argument(
+        "--pico4-port",
+        type=int,
+        default=63901,
+        help="Pico 4 direct-mode TCP listen port.",
+    )
+    parser.add_argument(
+        "--pico4-relay-host",
+        default="127.0.0.1",
+        help="Pico 4 relay daemon host.",
+    )
+    parser.add_argument(
+        "--pico4-relay-port",
+        type=int,
+        default=63902,
+        help="Pico 4 relay daemon port.",
+    )
+    parser.add_argument(
+        "--pico4-broadcast-port",
+        type=int,
+        default=29888,
+        help="Pico 4 direct-mode UDP broadcast port.",
     )
     args = parser.parse_args()
 

@@ -47,6 +47,22 @@ def default_inspire_config_path() -> Path:
     )
 
 
+def default_pico4_config_path(hand_type: str = "wuji") -> Path:
+    """Return default Pico4 retarget config for supported dexterous hands."""
+    config_name = {
+        "wuji": "pico4_wuji_hand.yaml",
+        "inspire": "pico4_inspire_hand.yaml",
+    }.get(hand_type)
+    if config_name is None:
+        raise ValueError(f"No default Pico4 retarget config for hand type: {hand_type}")
+    return (
+        Path(__file__).resolve().parent.parent
+        / "config"
+        / "pico4"
+        / config_name
+    )
+
+
 class HandRetargeter:
     """Wraps AnyDexRetarget: Quest 3 landmarks -> joint angles."""
 

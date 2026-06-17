@@ -54,7 +54,11 @@ from util.udp_socket import (
     pinch_distance_from_landmarks,
 )
 from util.wrist_tracker import WristTracker
-from util.hand_retarget import HandRetargeter
+from util.hand_retarget import (
+    HandRetargeter,
+    default_inspire_config_path,
+    default_pico4_config_path,
+)
 
 # ---------------------------------------------------------------------------
 # RM_API2 SDK path
@@ -176,6 +180,16 @@ def _pinch_to_gripper_position(pinch_distance: float) -> float:
     """Map pinch distance to Kortex gripper position (binary: 0=open, 1=closed)."""
     ratio = clamp_pinch_ratio(pinch_distance, _PINCH_MAX_DISTANCE)
     return 1.0 if ratio < 0.5 else 0.0
+
+
+def _resolve_hand_config(args: argparse.Namespace, hand_type: str) -> str | None:
+    if args.hand_config:
+        return args.hand_config
+    if args.input_source == "pico4" and hand_type in ("wuji", "inspire"):
+        return str(default_pico4_config_path(hand_type))
+    if hand_type == "inspire":
+        return str(default_inspire_config_path())
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +504,7 @@ def _run_rm65_teleop(config: dict, args: argparse.Namespace) -> None:
     inspire_retargeter = None
     inspire_controller = None
     if has_inspire:
-        from util.hand_retarget import HandRetargeter, default_inspire_config_path
-        inspire_retargeter = HandRetargeter(str(default_inspire_config_path()), "right")
+        inspire_retargeter = HandRetargeter(_resolve_hand_config(args, "inspire"), "right")
         inspire_controller = InspireSerialController(
             args.inspire_port,
             args.inspire_baudrate,
@@ -524,10 +537,21 @@ def _run_rm65_teleop(config: dict, args: argparse.Namespace) -> None:
     # Input source
     sock = None
     avp_input = None
+    pico4_input = None
     if args.input_source == "avp":
         from util.avp_input import AVPInput
         avp_input = AVPInput(ip=args.avp_ip)
         print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
     else:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
@@ -631,6 +655,31 @@ def _run_rm65_teleop(config: dict, args: argparse.Namespace) -> None:
                             elif result is not None and now - last_inspire_warn_time > 1.0:
                                 print("Warning: invalid Inspire retarget frame; keeping previous hand command.")
                                 last_inspire_warn_time = now
+            elif pico4_input is not None:
+                if has_gripper:
+                    pinch_distance = pico4_input.get_pinch_distance("right")
+                    if pinch_distance is not None:
+                        latest_gripper_pos = _rm65_pinch_to_gripper(pinch_distance)
+                        saw_valid_data = True
+
+                wrist = pico4_input.get_wrist_pose("right")
+                if wrist is not None and tracker is not None:
+                    robot_position, robot_quaternion = wrist
+                    saw_valid_data = True
+                    if not tracker.initialized:
+                        print("Captured initial wrist reference pose.")
+                    tracker.update(robot_position, robot_quaternion)
+
+                if has_inspire and inspire_retargeter is not None:
+                    mediapipe_pts = pico4_input.get_landmarks_mediapipe("right")
+                    if mediapipe_pts is not None:
+                        result = inspire_retargeter.retarget_mediapipe(mediapipe_pts)
+                        if result is not None and np.all(np.isfinite(result)):
+                            latest_inspire_angles = _inspire_retarget_to_real(result)
+                            saw_valid_data = True
+                        elif result is not None and now - last_inspire_warn_time > 1.0:
+                            print("Warning: invalid Inspire retarget frame; keeping previous hand command.")
+                            last_inspire_warn_time = now
             else:
                 packet = recv_latest_packet(sock)
                 if packet is not None:
@@ -748,6 +797,8 @@ def _run_rm65_teleop(config: dict, args: argparse.Namespace) -> None:
                 print(f"Warning: RM65 disconnect failed: {exc}")
         if sock is not None:
             sock.close()
+        if pico4_input is not None:
+            pico4_input.stop()
         if inspire_controller is not None:
             try:
                 inspire_controller.close()
@@ -810,10 +861,20 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not send dexterous-hand commands (currently mainly used for kinova_wuji).",
     )
-    parser.add_argument("--input-source", default="quest3", choices=["quest3", "avp"],
-                        help="Input device: quest3 (UDP, default) or avp (Vision Pro via avp_stream).")
+    parser.add_argument("--input-source", default="quest3", choices=["quest3", "avp", "pico4"],
+                        help="Input device: quest3 (UDP, default), avp, or pico4.")
     parser.add_argument("--avp-ip", default="192.168.1.100",
                         help="Apple Vision Pro IP address (used with --input-source avp).")
+    parser.add_argument("--pico4-mode", default="relay", choices=["relay", "direct"],
+                        help="Pico 4 input mode: relay daemon (default) or direct TCP server.")
+    parser.add_argument("--pico4-port", type=int, default=63901,
+                        help="Pico 4 direct-mode TCP listen port.")
+    parser.add_argument("--pico4-relay-host", default="127.0.0.1",
+                        help="Pico 4 relay daemon host.")
+    parser.add_argument("--pico4-relay-port", type=int, default=63902,
+                        help="Pico 4 relay daemon port.")
+    parser.add_argument("--pico4-broadcast-port", type=int, default=29888,
+                        help="Pico 4 direct-mode UDP broadcast port.")
     parser.add_argument("--inspire-port", default="/dev/ttyUSB0", help="Serial port for Inspire hand direct control.")
     parser.add_argument("--inspire-baudrate", type=int, default=115200, help="Baudrate for Inspire hand serial control.")
     parser.add_argument("--inspire-hand-id", type=int, default=1, help="Hand ID used in Inspire serial protocol.")
@@ -827,16 +888,27 @@ def _parse_args() -> argparse.Namespace:
 
 def _run_hand_only(args: argparse.Namespace) -> None:
     """Run pure hand retargeting without arm control."""
-    hand_retargeter = HandRetargeter(args.hand_config, "right")
+    hand_retargeter = HandRetargeter(_resolve_hand_config(args, "wuji"), "right")
     hand, hand_controller = _make_hand_controller(args)
 
     # Input source
     sock = None
     avp_input = None
+    pico4_input = None
     if args.input_source == "avp":
         from util.avp_input import AVPInput
         avp_input = AVPInput(ip=args.avp_ip)
         print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
     else:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
@@ -863,8 +935,16 @@ def _run_hand_only(args: argparse.Namespace) -> None:
                         mediapipe_pts = avp_input.get_landmarks_mediapipe("right")
                         if mediapipe_pts is not None:
                             result = hand_retargeter.retarget_mediapipe(mediapipe_pts)
-                            if result is not None:
-                                latest_hand_qpos = result
+                        if result is not None:
+                            latest_hand_qpos = result
+            elif pico4_input is not None:
+                # --- Pico 4 path ---
+                if hand_retargeter.available:
+                    mediapipe_pts = pico4_input.get_landmarks_mediapipe("right")
+                    if mediapipe_pts is not None:
+                        result = hand_retargeter.retarget_mediapipe(mediapipe_pts)
+                        if result is not None:
+                            latest_hand_qpos = result
             else:
                 # --- Quest 3 path (unchanged) ---
                 packet = recv_latest_packet(sock)
@@ -895,7 +975,10 @@ def _run_hand_only(args: argparse.Namespace) -> None:
                 hand.write_joint_enabled(False)
             except Exception as exc:
                 print(f"Warning: failed to disable Wuji hand cleanly: {exc}")
-        sock.close()
+        if sock is not None:
+            sock.close()
+        if pico4_input is not None:
+            pico4_input.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -931,10 +1014,21 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
     # Input source
     sock = None
     avp_input = None
+    pico4_input = None
     if args.input_source == "avp":
         from util.avp_input import AVPInput
         avp_input = AVPInput(ip=args.avp_ip)
         print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
     else:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
@@ -944,7 +1038,7 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
     hand = None
     hand_controller = None
     if is_wuji:
-        hand_retargeter = HandRetargeter(args.hand_config, "right")
+        hand_retargeter = HandRetargeter(_resolve_hand_config(args, "wuji"), "right")
         hand, hand_controller = _make_hand_controller(args)
 
     kinova_args = SimpleNamespace(
@@ -988,7 +1082,7 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
             initial_site_quat,
             position_scale=args.position_scale,
             ema_alpha=args.ema_alpha,
-            negate_rot_xy=True if args.input_source != "avp" else False,
+            negate_rot_xy=True if args.input_source == "quest3" else False,
             base_xmat=base_xmat,
             position_deadband=_WRIST_POS_DEADBAND,
             rotation_deadband_deg=_WRIST_ROT_DEADBAND_DEG,
@@ -1055,6 +1149,29 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
                             if not tracker.initialized:
                                 print("Captured initial wrist reference pose.")
                             tracker.update(robot_position, robot_quaternion)
+                elif pico4_input is not None:
+                    # --- Pico 4 path ---
+                    if is_wuji and hand_retargeter is not None and hand_retargeter.available:
+                        mediapipe_pts = pico4_input.get_landmarks_mediapipe("right")
+                        if mediapipe_pts is not None:
+                            result = hand_retargeter.retarget_mediapipe(mediapipe_pts)
+                            if result is not None:
+                                latest_hand_qpos = result
+                                saw_valid_data = True
+                    elif not is_wuji:
+                        pinch_distance = pico4_input.get_pinch_distance("right")
+                        if pinch_distance is not None:
+                            latest_gripper_pos = _pinch_to_gripper_position(pinch_distance)
+                            saw_valid_data = True
+
+                    wrist = pico4_input.get_wrist_pose("right")
+                    if wrist is not None:
+                        from util.avp_input import apply_real_kinova_base_correction
+                        robot_position, robot_quaternion = apply_real_kinova_base_correction(*wrist)
+                        saw_valid_data = True
+                        if not tracker.initialized:
+                            print("Captured initial wrist reference pose.")
+                        tracker.update(robot_position, robot_quaternion)
                 else:
                     # --- Quest 3 path (unchanged) ---
                     packet = recv_latest_packet(sock)
@@ -1172,7 +1289,10 @@ def _run_arm_teleop(config: dict, args: argparse.Namespace) -> None:
                     hand.write_joint_enabled(False)
                 except Exception as exc:
                     print(f"Warning: failed to disable Wuji hand cleanly: {exc}")
-            sock.close()
+            if sock is not None:
+                sock.close()
+            if pico4_input is not None:
+                pico4_input.stop()
 
 
 # ---------------------------------------------------------------------------
