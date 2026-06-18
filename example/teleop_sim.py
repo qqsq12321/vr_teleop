@@ -5,6 +5,7 @@ Supports multiple robot configurations via --robot:
   kinova_gripper Kinova Gen3 + Robotiq 2F-85 gripper
   kinova_wuji    Kinova Gen3 + Wuji dexterous hand (20 DOF)
   rm65           Realman RM65 6-DOF arm (no end-effector)
+  dexforce       DexForce dual-arm + dual-hand humanoid (bimanual)
   aloha          Aloha bimanual (dual 6-DOF arms + grippers)
 
 Input sources (--input-source):
@@ -16,12 +17,15 @@ Examples:
     python example/teleop_sim.py --robot kinova_gripper
     python example/teleop_sim.py --robot kinova_gripper --input-source avp --avp-ip 192.168.1.100
     python example/teleop_sim.py --robot kinova_wuji --hand-config path/to/config.yaml
+    python example/teleop_sim.py --robot dexforce --input-source pico4
     python example/teleop_sim.py --robot aloha --position-scale 3.0
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path as _Path
 
 sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
@@ -36,6 +40,7 @@ import numpy as np
 from mujoco import viewer
 
 from util.ik import solve_pose_ik
+from util.ik import solve_body_pose_ik
 from util.quaternion import (
     matrix_to_quaternion,
     transform_vr_to_robot_pose,
@@ -63,6 +68,66 @@ from util.hand_retarget import (
 
 _SCENE_DIR = Path(__file__).resolve().parent / "scene"
 _ALOHA_SCENE = _SCENE_DIR / "aloha" / "scene.xml"
+_DEXFORCE_ROOT = Path("/home/qsq/yisheng/remote_control_robot/interfaces/simu/urdf/dexforce")
+_DEXFORCE_XACRO = _DEXFORCE_ROOT / "dexforce.urdf.xacro"
+_DEXFORCE_HAND_TYPE = "linker_l20"
+
+
+def _rewrite_dexforce_mesh_paths(xml_text: str, hand_type: str) -> str:
+    """Rewrite DexForce mesh filenames to absolute paths for MuJoCo loading."""
+    body_root = _DEXFORCE_ROOT / "body"
+    hand_root = _DEXFORCE_ROOT / "hand" / hand_type
+    prefix_roots = (
+        ("visual/chassis/", body_root),
+        ("collision/chassis/", body_root),
+        ("visual/head/", body_root),
+        ("collision/head/", body_root),
+        ("visual/torso/", body_root),
+        ("collision/torso/", body_root),
+        ("visual/left_arm/", body_root),
+        ("collision/left_arm/", body_root),
+        ("visual/right_arm/", body_root),
+        ("collision/right_arm/", body_root),
+        ("visual/left_hand/", hand_root),
+        ("collision/left_hand/", hand_root),
+        ("visual/right_hand/", hand_root),
+        ("collision/right_hand/", hand_root),
+    )
+    for prefix, root in prefix_roots:
+        xml_text = xml_text.replace(
+            f'filename="{prefix}',
+            f'filename="{(root / prefix).as_posix()}/',
+        )
+    return xml_text
+
+
+def _strip_dexforce_inertials(xml_text: str) -> str:
+    """Remove link inertials so MuJoCo can infer stable inertias from geoms."""
+    root = ET.fromstring(xml_text)
+    for link in root.findall(".//link"):
+        inertial = link.find("inertial")
+        if inertial is not None:
+            link.remove(inertial)
+    return ET.tostring(root, encoding="unicode")
+
+
+def _prepare_dexforce_urdf(hand_type: str = _DEXFORCE_HAND_TYPE) -> Path:
+    """Expand DexForce xacro and cache a MuJoCo-friendly URDF in /tmp."""
+    import xacro
+
+    cache_dir = Path(tempfile.gettempdir()) / "vr_teleop"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"dexforce_{hand_type}.urdf"
+
+    doc = xacro.process_file(
+        str(_DEXFORCE_XACRO),
+        mappings={"input": "hand", "hand_type": hand_type},
+    )
+    xml_text = doc.toprettyxml()
+    xml_text = _rewrite_dexforce_mesh_paths(xml_text, hand_type)
+    xml_text = _strip_dexforce_inertials(xml_text)
+    cache_path.write_text(xml_text)
+    return cache_path
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +232,13 @@ ROBOT_CONFIGS = {
         "num_hand_actuators": 12,
         "hand_qpos_mapping": [8, 9, 10, 11, 0, 1, 2, 3, 6, 7, 4, 5],
         "bimanual": False,
+    },
+    "dexforce": {
+        "scene_xml": str(_DEXFORCE_XACRO),
+        "position_scale": 3.0,
+        "bimanual": True,
+        "dexforce": True,
+        "dexforce_hand_type": _DEXFORCE_HAND_TYPE,
     },
     "aloha": {
         "scene_xml": str(_ALOHA_SCENE),
@@ -359,6 +431,155 @@ class ArmController:
                         self.data.ctrl[act_id] = q_sol[qadr]
             if self.latest_gripper_cmd is not None and self.gripper_actuator_id != -1:
                 self.data.ctrl[self.gripper_actuator_id] = self.latest_gripper_cmd
+
+
+class DexForceArmController:
+    """Per-arm controller for DexForce bimanual teleop."""
+
+    _ARM_JOINT_SUFFIXES = [f"J{i}" for i in range(1, 8)]
+    _HAND_JOINT_SUFFIXES = [
+        "T_CMC_ROLL",
+        "T_CMC_YAW",
+        "T_CMC_PITCH",
+        "T_MCP",
+        "T_IP",
+        "IF_MCP_ROLL",
+        "IF_MCP_PITCH",
+        "IF_PIP",
+        "IF_DIP",
+        "MF_MCP_ROLL",
+        "MF_MCP_PITCH",
+        "MF_PIP",
+        "MF_DIP",
+        "RF_MCP_ROLL",
+        "RF_MCP_PITCH",
+        "RF_PIP",
+        "RF_DIP",
+        "LF_MCP_ROLL",
+        "LF_MCP_PITCH",
+        "LF_PIP",
+        "LF_DIP",
+    ]
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        ik_data: mujoco.MjData,
+        side: str,
+        args: argparse.Namespace,
+        *,
+        hand_config: str | None = None,
+    ):
+        self.model = model
+        self.data = data
+        self.ik_data = ik_data
+        self.side = side
+        self.args = args
+
+        prefix = side.upper()
+        self.ee_body_name = f"{side}_j7"
+        self.ee_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, self.ee_body_name)
+        if self.ee_body_id == -1:
+            raise ValueError(f"Body '{self.ee_body_name}' not found.")
+
+        self.arm_joint_ids = []
+        self.arm_dof_indices = []
+        for suffix in self._ARM_JOINT_SUFFIXES:
+            jname = f"{prefix}_{suffix}"
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, jname)
+            if jid == -1:
+                raise ValueError(f"Joint '{jname}' not found.")
+            self.arm_joint_ids.append(jid)
+            self.arm_dof_indices.append(model.jnt_qposadr[jid])
+        self.arm_dof_indices = np.array(self.arm_dof_indices, dtype=int)
+        self.arm_home_qpos = np.zeros(len(self.arm_dof_indices), dtype=np.float64)
+
+        self.hand_joint_ids = []
+        self.hand_dof_indices = []
+        self.hand_joint_names = []
+        for suffix in self._HAND_JOINT_SUFFIXES:
+            jname = f"{prefix}_{suffix}"
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, jname)
+            if jid != -1:
+                self.hand_joint_ids.append(jid)
+                self.hand_dof_indices.append(model.jnt_qposadr[jid])
+                self.hand_joint_names.append(jname)
+        self.hand_dof_indices = np.array(self.hand_dof_indices, dtype=int)
+
+        self.hand_retargeter = None
+        if hand_config:
+            self.hand_retargeter = HandRetargeter(hand_config, side)
+
+        initial_body_pos = data.xpos[self.ee_body_id].copy()
+        initial_body_quat = matrix_to_quaternion(
+            data.xmat[self.ee_body_id].reshape(3, 3).copy()
+        )
+        base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        base_xmat = None
+        if base_body_id != -1:
+            base_xmat = data.xmat[base_body_id].reshape(3, 3).copy()
+
+        self.tracker = WristTracker(
+            initial_body_pos,
+            initial_body_quat,
+            position_scale=args.position_scale,
+            ema_alpha=args.ema_alpha,
+            negate_rot_xy=False,
+            base_xmat=base_xmat,
+        )
+        self.latest_hand_qpos = None
+
+    @property
+    def target_position(self):
+        return self.tracker.target_position
+
+    @property
+    def target_quaternion(self):
+        return self.tracker.target_quaternion
+
+    @property
+    def latest_residual(self):
+        return self.tracker.residual
+
+    @property
+    def latest_euler_residual(self):
+        return self.tracker.euler_residual
+
+    def update_from_pose(self, robot_position, robot_quaternion) -> None:
+        self.tracker.update(robot_position, robot_quaternion)
+
+    def update_hand_from_mediapipe(self, mediapipe_pts: np.ndarray | None) -> None:
+        if mediapipe_pts is None or self.hand_retargeter is None or not self.hand_retargeter.available:
+            return
+        result = self.hand_retargeter.retarget_mediapipe(mediapipe_pts)
+        if result is not None:
+            self.latest_hand_qpos = result
+
+    def step_ik(self) -> np.ndarray:
+        return solve_body_pose_ik(
+            self.model,
+            self.ik_data,
+            self.ee_body_id,
+            self.target_position,
+            self.target_quaternion,
+            self.data.qpos[: self.model.nq],
+            rot_weight=self.args.rot_weight,
+            damping=self.args.ik_damping,
+            current_q_weight=self.args.ik_current_weight,
+            dof_indices=self.arm_dof_indices,
+            home_qpos=self.arm_home_qpos,
+        )
+
+    def apply_qpos(self, q_sol: np.ndarray):
+        for joint_id in self.arm_joint_ids:
+            qadr = self.model.jnt_qposadr[joint_id]
+            if qadr < q_sol.shape[0]:
+                self.data.qpos[qadr] = q_sol[qadr]
+
+        if self.latest_hand_qpos is not None and len(self.hand_dof_indices) == len(self.latest_hand_qpos):
+            for qadr, value in zip(self.hand_dof_indices, self.latest_hand_qpos):
+                self.data.qpos[qadr] = value
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +991,134 @@ def _run_bimanual(config: dict, args: argparse.Namespace) -> None:
             time.sleep(0.0001)
 
 
+def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
+    hand_type = config.get("dexforce_hand_type", _DEXFORCE_HAND_TYPE)
+    if args.scene is None:
+        xml_path = _prepare_dexforce_urdf(hand_type)
+    else:
+        xml_path = Path(args.scene).expanduser().resolve()
+    print(f"Loading scene from: {xml_path}")
+    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    data = mujoco.MjData(model)
+    ik_data = mujoco.MjData(model)
+
+    data.qpos[:] = 0.0
+    mujoco.mj_forward(model, data)
+
+    left_arm = DexForceArmController(
+        model,
+        data,
+        ik_data,
+        "left",
+        args,
+        hand_config=args.hand_config,
+    )
+    right_arm = DexForceArmController(
+        model,
+        data,
+        ik_data,
+        "right",
+        args,
+        hand_config=args.hand_config,
+    )
+
+    sock = None
+    avp_input = None
+    pico4_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
+
+    last_log_time = time.time()
+
+    with viewer.launch_passive(model, data) as vis:
+        while vis.is_running():
+            loop_start = time.time()
+
+            if avp_input is not None:
+                if avp_input.poll():
+                    for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                        arm.update_hand_from_mediapipe(avp_input.get_landmarks_mediapipe(side))
+                        wrist = avp_input.get_wrist_pose(side)
+                        if wrist is not None:
+                            arm.update_from_pose(*wrist)
+            elif pico4_input is not None:
+                for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                    arm.update_hand_from_mediapipe(pico4_input.get_landmarks_mediapipe(side))
+                    wrist = pico4_input.get_wrist_pose(side)
+                    if wrist is not None:
+                        arm.update_from_pose(*wrist)
+            else:
+                try:
+                    sock_data, _ = sock.recvfrom(4096)
+                    message = sock_data.decode("utf-8", errors="ignore")
+                    for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                        if arm.hand_retargeter is not None:
+                            landmarks = (
+                                parse_left_landmarks(message)
+                                if side == "left"
+                                else parse_right_landmarks(message)
+                            )
+                            if landmarks is not None:
+                                result = arm.hand_retargeter.retarget(landmarks)
+                                if result is not None:
+                                    arm.latest_hand_qpos = result
+                        wrist_pose = (
+                            parse_left_wrist_pose(message)
+                            if side == "left"
+                            else parse_right_wrist_pose(message)
+                        )
+                        if wrist_pose is not None:
+                            wrist_position = (wrist_pose[0], wrist_pose[1], wrist_pose[2])
+                            wrist_quaternion = (
+                                wrist_pose[3],
+                                wrist_pose[4],
+                                wrist_pose[5],
+                                wrist_pose[6],
+                            )
+                            robot_position, robot_quaternion = transform_vr_to_robot_pose(
+                                wrist_position, wrist_quaternion
+                            )
+                            arm.update_from_pose(robot_position, robot_quaternion)
+                except BlockingIOError:
+                    pass
+
+            q_left = left_arm.step_ik()
+            q_right = right_arm.step_ik()
+            left_arm.apply_qpos(q_left)
+            right_arm.apply_qpos(q_right)
+            mujoco.mj_forward(model, data)
+            vis.sync()
+
+            now = time.time()
+            if now - last_log_time > 1.0:
+                print(
+                    f"L resid: {left_arm.latest_residual} "
+                    f"R resid: {right_arm.latest_residual}"
+                )
+                last_log_time = now
+
+            sleep_time = model.opt.timestep - (time.time() - loop_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -882,12 +1231,16 @@ def main() -> None:
     config = ROBOT_CONFIGS[args.robot]
 
     # Apply defaults from config if user didn't override
+    if config.get("dexforce", False) and args.scene is None:
+        args.scene = str(_prepare_dexforce_urdf(config.get("dexforce_hand_type", _DEXFORCE_HAND_TYPE)))
     if args.scene is None:
         args.scene = config["scene_xml"]
     if args.position_scale is None:
         args.position_scale = config["position_scale"]
 
-    if config.get("bimanual", False):
+    if config.get("dexforce", False):
+        _run_dexforce_bimanual(config, args)
+    elif config.get("bimanual", False):
         _run_bimanual(config, args)
     else:
         _run_single_arm(config, args)

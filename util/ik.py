@@ -191,6 +191,105 @@ def solve_pose_ik(
     return q
 
 
+def solve_body_pose_ik(
+    model: mujoco.MjModel,
+    workspace: mujoco.MjData,
+    body_id: int,
+    target_pos: np.ndarray,
+    target_quat: np.ndarray,
+    q_init: np.ndarray,
+    *,
+    max_iters: int = 30,
+    tol: float = 1e-4,
+    rot_weight: float = 1.0,
+    home_qpos: np.ndarray | None = None,
+    home_weight: float = 0.01,
+    current_q_weight: float = 0.0,
+    damping: float = 1e-3,
+    dof_indices: np.ndarray | None = None,
+) -> np.ndarray:
+    """Levenberg-Marquardt IK for a body pose (position + orientation)."""
+    q = np.asarray(q_init, dtype=np.float64).copy()
+    target_rot = np.asarray(quaternion_to_matrix(target_quat), dtype=np.float64)
+
+    n_robot = 0
+    if home_qpos is not None:
+        n_robot = len(home_qpos)
+    if n_robot > model.nq:
+        n_robot = model.nq
+    if n_robot == 0:
+        n_robot = model.nq
+
+    for _ in range(max_iters):
+        workspace.qpos[: model.nq] = q
+        workspace.qvel[:] = 0.0
+        mujoco.mj_forward(model, workspace)
+        current_pos = workspace.xpos[body_id]
+        current_rot = workspace.xmat[body_id].reshape(3, 3)
+
+        err_pos = target_pos - current_pos
+        rot_err = _rotation_error(target_rot, current_rot)
+        err = np.hstack([err_pos, rot_weight * rot_err])
+        if np.linalg.norm(err) < tol:
+            break
+
+        jacp = np.zeros((3, model.nv))
+        jacr = np.zeros((3, model.nv))
+        mujoco.mj_jacBody(model, workspace, jacp, jacr, body_id)
+        jac = np.vstack([jacp, rot_weight * jacr])
+
+        if dof_indices is not None:
+            mask = np.ones(model.nv, dtype=bool)
+            mask[dof_indices] = False
+            jac[:, mask] = 0.0
+        else:
+            if n_robot < model.nv:
+                jac[:, n_robot:] = 0.0
+
+        if home_weight > 0.0 and home_qpos is not None:
+            home = np.asarray(home_qpos, dtype=np.float64)
+            scale = math.sqrt(home_weight)
+            if dof_indices is not None and len(home) == len(dof_indices):
+                err_home = scale * (home - q[dof_indices])
+                jac_home = np.zeros((len(dof_indices), model.nv))
+                for i, dof_idx in enumerate(dof_indices):
+                    jac_home[i, dof_idx] = scale
+                err = np.hstack([err, err_home])
+                jac = np.vstack([jac, jac_home])
+            elif dof_indices is None:
+                err_home = scale * (home - q[:n_robot])
+                jac_home = np.zeros((n_robot, model.nv))
+                np.fill_diagonal(jac_home[:n_robot, :n_robot], scale)
+                err = np.hstack([err, err_home])
+                jac = np.vstack([jac, jac_home])
+
+        if current_q_weight > 0.0:
+            scale = math.sqrt(current_q_weight)
+            if dof_indices is not None:
+                err_curr = scale * (q_init[dof_indices] - q[dof_indices])
+                jac_curr = np.zeros((len(dof_indices), model.nv))
+                for i, dof_idx in enumerate(dof_indices):
+                    jac_curr[i, dof_idx] = scale
+                err = np.hstack([err, err_curr])
+                jac = np.vstack([jac, jac_curr])
+            else:
+                q_initial_robot = q_init[:n_robot]
+                err_curr = scale * (q_initial_robot - q[:n_robot])
+                jac_curr = np.zeros((n_robot, model.nv))
+                np.fill_diagonal(jac_curr[:n_robot, :n_robot], scale)
+                err = np.hstack([err, err_curr])
+                jac = np.vstack([jac, jac_curr])
+
+        JJ = jac @ jac.T + damping * np.eye(jac.shape[0])
+        dq = jac.T @ np.linalg.solve(JJ, err)
+        if dof_indices is not None:
+            dq[mask] = 0.0
+        elif n_robot < model.nv:
+            dq[n_robot:] = 0.0
+        mujoco.mj_integratePos(model, q, dq, 1.0)
+    return q
+
+
 def _rotation_error(target_rot: np.ndarray, current_rot: np.ndarray) -> np.ndarray:
     r_err = target_rot @ current_rot.T
     trace = np.trace(r_err)

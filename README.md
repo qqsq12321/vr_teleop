@@ -19,6 +19,7 @@
 | `teleop_real.py --robot rm65_gripper` | Realman RM65 + EG2-4C2 | 实物 | RM API2 控制机械臂，右手捏合控制二指夹爪 |
 | `teleop_sim.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 仿真 | MuJoCo 仿真，右手控制手臂 + Inspire 灵巧手重定向 |
 | `teleop_real.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 实物 | RM API2 控制机械臂 + 串口控制 Inspire 灵巧手 |
+| `teleop_sim.py --robot dexforce` | DexForce 双臂 + 双手 | 仿真 | MuJoCo 仿真，左右手控制双臂；手部配置可先留空 |
 | `teleop_sim.py --robot aloha` | Aloha 双臂 | 仿真 | 左右手分别控制两个臂 |
 
 ## 前置条件
@@ -157,6 +158,9 @@ python example/teleop_sim.py --robot kinova_wuji --input-source pico4 --hand-con
 # RM65 + Inspire Hand（仿真）
 python example/teleop_sim.py --robot rm65_inspire --input-source pico4
 
+# DexForce 双臂 + 双手（仿真）
+python example/teleop_sim.py --robot dexforce --input-source pico4
+
 # Aloha 双臂（仿真）
 python example/teleop_sim.py --robot aloha --input-source pico4
 ```
@@ -194,7 +198,7 @@ python example/teleop_sim.py --robot kinova_gripper --input-source pico4 --pico4
 仿真专用:
 - `--scene path/to/scene.xml` — 覆盖默认场景
 - `--site site_name` — 覆盖末端执行器 site 名称
-- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件（`kinova_wuji` / `rm65_inspire`）
+- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件（`kinova_wuji` / `rm65_inspire` / `dexforce` 可选）
 - `--hand-side left|right` — 手部侧向（灵巧手重定向场景，默认 `right`）
 
 实物专用:
@@ -202,7 +206,7 @@ python example/teleop_sim.py --robot kinova_gripper --input-source pico4 --pico4
 - `--kinova-username admin` — Kinova 用户名
 - `--kinova-password admin` — Kinova 密码
 - `--rm65-ip 192.168.1.18` — RM65 IP
-- `--hand-config path/to/config.yaml` — 指定 Wuji 手重定向配置文件（当前主要用于 `kinova_wuji`；`rm65_inspire` 实物仍使用内置默认配置）
+- `--hand-config path/to/config.yaml` — 指定 Wuji 手重定向配置文件（当前主要用于 `kinova_wuji`；`rm65_inspire` 实物仍使用内置默认配置；`dexforce` 可先留空）
 - `--disable-arm` — 仅控制手部（`kinova_wuji` 或 `rm65_inspire`）
 - `--disable-hand` — 仅控制机械臂（当前主要用于 `kinova_wuji`）
 - `--inspire-port /dev/ttyUSB0` — Inspire 手串口设备
