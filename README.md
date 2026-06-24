@@ -19,7 +19,7 @@
 | `teleop_real.py --robot rm65_gripper` | Realman RM65 + EG2-4C2 | 实物 | RM API2 控制机械臂，右手捏合控制二指夹爪 |
 | `teleop_sim.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 仿真 | MuJoCo 仿真，右手控制手臂 + Inspire 灵巧手重定向 |
 | `teleop_real.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 实物 | RM API2 控制机械臂 + 串口控制 Inspire 灵巧手 |
-| `teleop_sim.py --robot dexforce` | DexForce 双臂 + 双手 | 仿真 | MuJoCo 仿真，左右手控制双臂；手部配置可先留空 |
+| `teleop_sim.py --robot dexforce` | DexForce 双臂 + 双手 | 仿真 | MuJoCo XML 场景，左右手控制双臂；手部配置可先留空 |
 | `teleop_sim.py --robot aloha` | Aloha 双臂 | 仿真 | 左右手分别控制两个臂 |
 
 ## 前置条件
@@ -233,6 +233,7 @@ vr_teleop/
 │   ├── teleop_sim.py               # 仿真遥操作（MuJoCo viewer）
 │   ├── teleop_real.py              # 实物遥操作（Kortex SDK）
 │   └── scene/                      # MuJoCo 场景文件 (XML)
+│       └── dexforce/                  # DexForce 场景 mesh 资源
 ├── util/                        # 核心模块
 │   ├── ik.py                       # 逆运动学求解器
 │   ├── quaternion.py               # 四元数运算 + VR→机器人坐标变换
@@ -251,6 +252,67 @@ vr_teleop/
 │   ├── RM_API2/                    # Realman RM65 SDK
 │   └── rm_models/                  # RM65 / Inspire 模型资源
 └── README.md
+```
+
+## 架构总览
+
+系统采用分层设计，从 VR 输入到机器人执行形成统一管线：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  入口层  example/teleop_sim.py · teleop_real.py          │
+│  ROBOT_CONFIGS 字典驱动；单臂 / 双臂 / DexForce 三路径   │
+├──────────────────────────────────────────────────────────┤
+│  输入适配层                                              │
+│  udp_socket.py   Quest 3 (UDP)                           │
+│  avp_input.py    Vision Pro (avp_stream / gRPC)          │
+│  pico4_input.py  Pico 4 (relay / direct TCP)             │
+│  → 统一输出: wrist_pose / landmarks / pinch_distance     │
+├──────────────────────────────────────────────────────────┤
+│  坐标变换层  util/quaternion.py                          │
+│  VR 坐标系 → 机器人坐标系；四元数运算                    │
+├──────────────────────────────────────────────────────────┤
+│  腕部跟踪层  util/wrist_tracker.py  (WristTracker)       │
+│  残差跟踪 + EMA 平滑 + deadband + base_xmat 变换         │
+├──────────────────────────────────────────────────────────┤
+│  求解层                                                  │
+│  util/ik.py              Levenberg-Marquardt IK          │
+│  util/hand_retarget.py   灵巧手重定向 (AnyDexRetarget)   │
+├──────────────────────────────────────────────────────────┤
+│  执行层                                                  │
+│  仿真: MuJoCo viewer + data.ctrl                         │
+│  实物: Kortex SDK (Kinova) / RM_API2 (RM65) / 串口(Inspire) │
+├──────────────────────────────────────────────────────────┤
+│  资源层                                                  │
+│  example/scene/*.xml   MuJoCo 场景                       │
+│  third_party/          mujoco_menagerie / AnyDexRetarget │
+│  config/pico4/         手部重定向 YAML                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 关键设计
+
+- **配置驱动**：`ROBOT_CONFIGS` 字典定义每种机器人的 scene_xml、site_name、home_qpos、hand_type、position_scale 等，`--robot` 参数切换。`example/teleop_sim.py` 与 `teleop_real.py` 各维护一份。
+- **输入源抽象**：三个 input adapter 统一暴露 `get_wrist_pose(side)` / `get_landmarks_mediapipe(side)` / `get_pinch_distance(side)` 接口，主循环按 `avp / pico4 / quest3` 三分支调度。AVP/Pico4 内部已完成坐标变换，Quest3 走 `transform_vr_to_robot_pose`。
+- **Sim/Real 双入口**：
+  - `teleop_sim.py` — `viewer.launch_passive` 可视化，三种执行路径：`_run_single_arm` / `_run_bimanual`(Aloha) / `_run_dexforce_bimanual`(含躯干颈部头追)
+  - `teleop_real.py` — `_run_arm_teleop`(Kinova) / `_run_rm65_teleop` / `_run_hand_only`，每个机器人独立 SDK 连接、归位、控制周期
+- **SDK 隔离**：Kortex SDK 与 RM_API2 通过 `sys.path.insert` + 函数内 lazy import，避免互相初始化冲突。
+- **WristTracker 共享**：仿真与实物共用同一残差跟踪器，首帧锁定初始位姿，后续残差经 EMA 平滑后乘 `position_scale` 累加到目标位姿。实物路径额外加笛卡尔平滑层（`cmd_pos += (target-cmd_pos)*gain` + SLERP）。
+- **手部重定向**：`HandRetargeter` 封装 `AnyDexRetarget`（git submodule），按 input_source × hand_type 路由到不同 YAML 配置。Quest3 用 63 维原始 landmarks，AVP/Pico4 用 21×3 mediapipe 格式。
+
+### 数据流（以 Quest3 + kinova_wuji 仿真为例）
+
+```
+Quest3 UDP 包
+  → udp_socket.parse_right_wrist_pose / parse_right_landmarks
+  → quaternion.transform_vr_to_robot_pose (腕部位姿)
+  → WristTracker.update (残差 + EMA → target_pos / target_quat)
+  → ik.solve_pose_ik (LM 迭代 → q_sol)
+  → data.ctrl[0:7] = q_sol
+  → hand_retarget.HandRetargeter.retarget(landmarks) → 20 维手部关节
+  → data.ctrl[7:27] = hand_qpos
+  → mujoco.mj_step + viewer.sync
 ```
 
 ## VR 端设置
