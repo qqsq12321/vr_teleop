@@ -8,15 +8,28 @@ import mujoco
 from mujoco import viewer
 
 
+_SCENE_ALIASES = {
+    "piper": "example/scene/scene_piper.xml",
+    "dexforce": "example/scene/scene_dexforce.xml",
+    "aloha": "example/scene/aloha/scene.xml",
+    "kinova": "example/scene/scene_kinova_gen3.xml",
+    "rm65": "example/scene/scene_rm65.xml",
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize a MuJoCo scene.")
     parser.add_argument(
         "scene",
         nargs="?",
-        default=str("example/scene/scene_piper.xml"),
-        help="Path to a MuJoCo XML scene file.",
+        default="piper",
+        help=(
+            "Path to a MuJoCo XML scene file, or a short alias: "
+            + ", ".join(_SCENE_ALIASES)
+        ),
     )
     args = parser.parse_args()
+    args.scene = _SCENE_ALIASES.get(args.scene, args.scene)
 
     xml_path = Path(args.scene).expanduser().resolve()
     model = mujoco.MjModel.from_xml_path(str(xml_path))

@@ -176,27 +176,28 @@ def _parse_tracking_json(
     Optional[np.ndarray],
     Optional[np.ndarray],
     Optional[np.ndarray],
+    Optional[np.ndarray],  # head pose [x,y,z,qx,qy,qz,qw]
 ]:
     try:
         outer = json.loads(payload.decode('utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     if isinstance(outer, dict) and 'value' in outer and isinstance(outer['value'], str):
         inner_str = outer['value'].replace('\\', '')
         try:
             data = json.loads(inner_str)
         except json.JSONDecodeError:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
     else:
         data = outer
 
     if not isinstance(data, dict):
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     hand_section = data.get('Hand', {})
     if not isinstance(hand_section, dict):
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
     left, left_wrist, left_joints = _parse_hand_state(
         hand_section.get('leftHand', {}),
@@ -206,7 +207,18 @@ def _parse_tracking_json(
         hand_section.get('rightHand', {}),
         wrist_joint_index=wrist_joint_index,
     )
-    return left, right, left_wrist, right_wrist, left_joints, right_joints
+
+    # Parse head pose
+    head_pose = None
+    head_section = data.get('Head', {})
+    if isinstance(head_section, dict):
+        pose_str = head_section.get('pose', '')
+        if isinstance(pose_str, str):
+            vals = _parse_csv_floats(pose_str)
+            if len(vals) >= 7:
+                head_pose = np.array(vals[:7], dtype=np.float64)
+
+    return left, right, left_wrist, right_wrist, left_joints, right_joints, head_pose
 
 
 # ── Relay mode frame parser ───────────────────────────────────────────────────
@@ -347,6 +359,7 @@ class Pico4:
         self._right_wrist_pose: Optional[np.ndarray] = None
         self._left_joints: Optional[np.ndarray] = None
         self._right_joints: Optional[np.ndarray] = None
+        self._head_pose: Optional[np.ndarray] = None
         self._last_update: float = 0.0
 
         if self._mode == 'relay':
@@ -412,6 +425,11 @@ class Pico4:
             return None
         return float(np.linalg.norm(thumb_tip - index_tip))
 
+    def get_head_pose(self) -> Optional[np.ndarray]:
+        """Return HMD pose as [x, y, z, qx, qy, qz, qw] in Pico frame, or None."""
+        with self._lock:
+            return self._head_pose.copy() if self._head_pose is not None else None
+
     def stop(self) -> None:
         self._stop.set()
         if self._thread.is_alive():
@@ -455,7 +473,7 @@ class Pico4:
                 payload = parser.try_parse()
                 if payload is None:
                     break
-                left, right, left_wrist, right_wrist, left_joints, right_joints = _parse_tracking_json(
+                left, right, left_wrist, right_wrist, left_joints, right_joints, head_pose = _parse_tracking_json(
                     payload,
                     wrist_joint_index=self._wrist_joint_index,
                 )
@@ -468,6 +486,8 @@ class Pico4:
                         self._right_hand = right
                         self._right_wrist_pose = right_wrist
                         self._right_joints = right_joints
+                    if head_pose is not None:
+                        self._head_pose = head_pose
                     if left is not None or right is not None:
                         self._last_update = time.monotonic()
         logger.info('Pico4 relay connection closed')
@@ -530,7 +550,7 @@ class Pico4:
                                         _CMD_BATTERY, _CMD_SENSOR):
                         last_hb = time.monotonic()
                     if frame['cmd'] == _CMD_DEVICE_STATE_JSON:
-                        left, right, left_wrist, right_wrist, left_joints, right_joints = _parse_tracking_json(
+                        left, right, left_wrist, right_wrist, left_joints, right_joints, head_pose = _parse_tracking_json(
                             frame['payload'],
                             wrist_joint_index=self._wrist_joint_index,
                         )
@@ -543,6 +563,8 @@ class Pico4:
                                 self._right_hand = right
                                 self._right_wrist_pose = right_wrist
                                 self._right_joints = right_joints
+                            if head_pose is not None:
+                                self._head_pose = head_pose
                             if left is not None or right is not None:
                                 self._last_update = time.monotonic()
         finally:

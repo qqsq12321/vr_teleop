@@ -24,8 +24,6 @@ Examples:
 from __future__ import annotations
 
 import sys
-import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path as _Path
 
 sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
@@ -59,6 +57,7 @@ from util.wrist_tracker import WristTracker
 from util.hand_retarget import (
     HandRetargeter,
     default_inspire_config_path,
+    default_linker_l20_config_path,
     default_pico4_config_path,
 )
 
@@ -68,66 +67,16 @@ from util.hand_retarget import (
 
 _SCENE_DIR = Path(__file__).resolve().parent / "scene"
 _ALOHA_SCENE = _SCENE_DIR / "aloha" / "scene.xml"
-_DEXFORCE_ROOT = Path("/home/qsq/yisheng/remote_control_robot/interfaces/simu/urdf/dexforce")
-_DEXFORCE_XACRO = _DEXFORCE_ROOT / "dexforce.urdf.xacro"
+_DEXFORCE_SCENE = _SCENE_DIR / "scene_dexforce.xml"
 _DEXFORCE_HAND_TYPE = "linker_l20"
-
-
-def _rewrite_dexforce_mesh_paths(xml_text: str, hand_type: str) -> str:
-    """Rewrite DexForce mesh filenames to absolute paths for MuJoCo loading."""
-    body_root = _DEXFORCE_ROOT / "body"
-    hand_root = _DEXFORCE_ROOT / "hand" / hand_type
-    prefix_roots = (
-        ("visual/chassis/", body_root),
-        ("collision/chassis/", body_root),
-        ("visual/head/", body_root),
-        ("collision/head/", body_root),
-        ("visual/torso/", body_root),
-        ("collision/torso/", body_root),
-        ("visual/left_arm/", body_root),
-        ("collision/left_arm/", body_root),
-        ("visual/right_arm/", body_root),
-        ("collision/right_arm/", body_root),
-        ("visual/left_hand/", hand_root),
-        ("collision/left_hand/", hand_root),
-        ("visual/right_hand/", hand_root),
-        ("collision/right_hand/", hand_root),
-    )
-    for prefix, root in prefix_roots:
-        xml_text = xml_text.replace(
-            f'filename="{prefix}',
-            f'filename="{(root / prefix).as_posix()}/',
-        )
-    return xml_text
-
-
-def _strip_dexforce_inertials(xml_text: str) -> str:
-    """Remove link inertials so MuJoCo can infer stable inertias from geoms."""
-    root = ET.fromstring(xml_text)
-    for link in root.findall(".//link"):
-        inertial = link.find("inertial")
-        if inertial is not None:
-            link.remove(inertial)
-    return ET.tostring(root, encoding="unicode")
-
-
-def _prepare_dexforce_urdf(hand_type: str = _DEXFORCE_HAND_TYPE) -> Path:
-    """Expand DexForce xacro and cache a MuJoCo-friendly URDF in /tmp."""
-    import xacro
-
-    cache_dir = Path(tempfile.gettempdir()) / "vr_teleop"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / f"dexforce_{hand_type}.urdf"
-
-    doc = xacro.process_file(
-        str(_DEXFORCE_XACRO),
-        mappings={"input": "hand", "hand_type": hand_type},
-    )
-    xml_text = doc.toprettyxml()
-    xml_text = _rewrite_dexforce_mesh_paths(xml_text, hand_type)
-    xml_text = _strip_dexforce_inertials(xml_text)
-    cache_path.write_text(xml_text)
-    return cache_path
+_DEXFORCE_LEFT_ARM_HOME_QPOS = np.array(
+    [0.0, -0.6, 0.0, -1.57, 0.0, -0.4, 0.0],
+    dtype=np.float64,
+)
+_DEXFORCE_RIGHT_ARM_HOME_QPOS = np.array(
+    [0.0, 0.6, 0.0, 1.57, 0.0, 0.4, 0.0],
+    dtype=np.float64,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +183,7 @@ ROBOT_CONFIGS = {
         "bimanual": False,
     },
     "dexforce": {
-        "scene_xml": str(_DEXFORCE_XACRO),
+        "scene_xml": str(_DEXFORCE_SCENE),
         "position_scale": 3.0,
         "bimanual": True,
         "dexforce": True,
@@ -265,13 +214,15 @@ def _pinch_to_gripper(
     return gripper_max * ratio if inverted else gripper_max * (1.0 - ratio)
 
 
-def _resolve_hand_config(args: argparse.Namespace, hand_type: str) -> str | None:
+def _resolve_hand_config(args: argparse.Namespace, hand_type: str, side: str = "right") -> str | None:
     if args.hand_config:
         return args.hand_config
-    if args.input_source == "pico4" and hand_type in ("wuji", "inspire"):
-        return str(default_pico4_config_path(hand_type))
+    if args.input_source == "pico4" and hand_type in ("wuji", "inspire", "linker_l20"):
+        return str(default_pico4_config_path(hand_type, side=side))
     if hand_type == "inspire":
         return str(default_inspire_config_path())
+    if hand_type == "linker_l20":
+        return str(default_linker_l20_config_path(args.input_source, side=side))
     return None
 
 
@@ -461,6 +412,11 @@ class DexForceArmController:
         "LF_DIP",
     ]
 
+    # qpos_mapping: retarget URDF joint order -> MuJoCo joint order, keyed by hand type
+    _HAND_QPOS_MAPPING = {
+        "linker_l20": [16, 17, 18, 19, 20, 0, 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 4, 5, 6, 7],
+    }
+
     def __init__(
         self,
         model: mujoco.MjModel,
@@ -470,6 +426,8 @@ class DexForceArmController:
         args: argparse.Namespace,
         *,
         hand_config: str | None = None,
+        hand_type: str = "linker_l20",
+        home_qpos: np.ndarray | None = None,
     ):
         self.model = model
         self.data = data
@@ -493,7 +451,16 @@ class DexForceArmController:
             self.arm_joint_ids.append(jid)
             self.arm_dof_indices.append(model.jnt_qposadr[jid])
         self.arm_dof_indices = np.array(self.arm_dof_indices, dtype=int)
-        self.arm_home_qpos = np.zeros(len(self.arm_dof_indices), dtype=np.float64)
+        self.arm_home_qpos = (
+            np.array(home_qpos, dtype=np.float64)
+            if home_qpos is not None
+            else np.zeros(len(self.arm_dof_indices), dtype=np.float64)
+        )
+        if self.arm_home_qpos.shape[0] != len(self.arm_dof_indices):
+            raise ValueError(
+                f"DexForce {side} home qpos size {self.arm_home_qpos.shape[0]} "
+                f"!= arm DoF count {len(self.arm_dof_indices)}."
+            )
 
         self.hand_joint_ids = []
         self.hand_dof_indices = []
@@ -507,9 +474,24 @@ class DexForceArmController:
                 self.hand_joint_names.append(jname)
         self.hand_dof_indices = np.array(self.hand_dof_indices, dtype=int)
 
+        # Build actuator indices for arm and hand (for ctrl-based control)
+        self.arm_actuator_ids = []
+        for suffix in self._ARM_JOINT_SUFFIXES:
+            aname = f"{prefix}_J{suffix[1:]}"  # e.g. LEFT_J1
+            aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, aname)
+            if aid != -1:
+                self.arm_actuator_ids.append(aid)
+        self.hand_actuator_ids = []
+        for suffix in self._HAND_JOINT_SUFFIXES:
+            aname = f"{prefix}_{suffix}"
+            aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, aname)
+            if aid != -1:
+                self.hand_actuator_ids.append(aid)
+
         self.hand_retargeter = None
         if hand_config:
             self.hand_retargeter = HandRetargeter(hand_config, side)
+        self.hand_qpos_mapping = self._HAND_QPOS_MAPPING.get(hand_type)
 
         initial_body_pos = data.xpos[self.ee_body_id].copy()
         initial_body_quat = matrix_to_quaternion(
@@ -577,9 +559,11 @@ class DexForceArmController:
             if qadr < q_sol.shape[0]:
                 self.data.qpos[qadr] = q_sol[qadr]
 
-        if self.latest_hand_qpos is not None and len(self.hand_dof_indices) == len(self.latest_hand_qpos):
-            for qadr, value in zip(self.hand_dof_indices, self.latest_hand_qpos):
-                self.data.qpos[qadr] = value
+        if self.latest_hand_qpos is not None:
+            mapped = self.latest_hand_qpos[self.hand_qpos_mapping] if self.hand_qpos_mapping is not None else self.latest_hand_qpos
+            if len(self.hand_dof_indices) == len(mapped):
+                for qadr, value in zip(self.hand_dof_indices, mapped):
+                    self.data.qpos[qadr] = value
 
 
 # ---------------------------------------------------------------------------
@@ -617,6 +601,12 @@ def _apply_initial_pose_aloha(model: mujoco.MjModel, data: mujoco.MjData) -> Non
             data.qpos[model.jnt_qposadr[lid]] = left_qpos[i]
         if rid != -1:
             data.qpos[model.jnt_qposadr[rid]] = right_qpos[i]
+    mujoco.mj_forward(model, data)
+
+
+def _apply_initial_pose_dexforce(model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    mujoco.mj_resetDataKeyframe(model, data, key_id)
     mujoco.mj_forward(model, data)
 
 
@@ -992,9 +982,8 @@ def _run_bimanual(config: dict, args: argparse.Namespace) -> None:
 
 
 def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
-    hand_type = config.get("dexforce_hand_type", _DEXFORCE_HAND_TYPE)
     if args.scene is None:
-        xml_path = _prepare_dexforce_urdf(hand_type)
+        xml_path = Path(config["scene_xml"]).expanduser().resolve()
     else:
         xml_path = Path(args.scene).expanduser().resolve()
     print(f"Loading scene from: {xml_path}")
@@ -1002,8 +991,11 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
     data = mujoco.MjData(model)
     ik_data = mujoco.MjData(model)
 
-    data.qpos[:] = 0.0
-    mujoco.mj_forward(model, data)
+    _apply_initial_pose_dexforce(model, data)
+
+    dexforce_hand_type = config.get("dexforce_hand_type", "linker_l20")
+    left_hand_config = _resolve_hand_config(args, dexforce_hand_type, side="left")
+    right_hand_config = _resolve_hand_config(args, dexforce_hand_type, side="right")
 
     left_arm = DexForceArmController(
         model,
@@ -1011,7 +1003,9 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
         ik_data,
         "left",
         args,
-        hand_config=args.hand_config,
+        hand_config=left_hand_config,
+        hand_type=dexforce_hand_type,
+        home_qpos=_DEXFORCE_LEFT_ARM_HOME_QPOS,
     )
     right_arm = DexForceArmController(
         model,
@@ -1019,7 +1013,9 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
         ik_data,
         "right",
         args,
-        hand_config=args.hand_config,
+        hand_config=right_hand_config,
+        hand_type=dexforce_hand_type,
+        home_qpos=_DEXFORCE_RIGHT_ARM_HOME_QPOS,
     )
 
     sock = None
@@ -1045,9 +1041,22 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
         sock = make_socket(args.port)
         print(f"  Input: Quest 3 (UDP port {args.port})")
 
+    # 躯干/颈部关节索引
+    _torso_joints = {
+        name: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        for name in ("ANKLE", "KNEE", "BUTTOCK", "WAIST", "NECK1", "NECK2")
+    }
+    _head_zero_q = [None]  # 用列表包装，loop 内可赋值
+    _head_zero_y = [None]  # HMD 初始高度（Pico Y 轴）
+
     last_log_time = time.time()
 
     with viewer.launch_passive(model, data) as vis:
+        vis.cam.azimuth = model.vis.global_.azimuth
+        vis.cam.elevation = model.vis.global_.elevation
+        vis.cam.distance = model.stat.extent * 1.5
+        vis.cam.lookat[:] = model.stat.center
+
         while vis.is_running():
             loop_start = time.time()
 
@@ -1064,6 +1073,49 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
                     wrist = pico4_input.get_wrist_pose(side)
                     if wrist is not None:
                         arm.update_from_pose(*wrist)
+                # Head pose → 躯干/颈部
+                head_raw = pico4_input.get_head_pose()
+                if head_raw is not None:
+                    qx, qy, qz, qw = head_raw[3], head_raw[4], head_raw[5], head_raw[6]
+                    q_cur = np.array([qw, qx, qy, qz])  # [w,x,y,z]
+                    head_y = float(head_raw[1])  # Pico Y 轴 = 高度（向上为正）
+                    if _head_zero_q[0] is None:
+                        _head_zero_q[0] = q_cur.copy()
+                        _head_zero_y[0] = head_y
+                    # q_cal = q_cur * q_zero^(-1)，得到相对初始姿态的旋转
+                    q0 = _head_zero_q[0]
+                    q_zero_inv = np.array([q0[0], -q0[1], -q0[2], -q0[3]])
+                    def _qmul(a, b):
+                        w = a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3]
+                        x = a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2]
+                        y = a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1]
+                        z = a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0]
+                        n = np.sqrt(w*w+x*x+y*y+z*z)
+                        return np.array([w,x,y,z]) / n if n > 1e-8 else np.array([1.,0,0,0])
+                    q = _qmul(q_cur, q_zero_inv)
+                    qw, qx, qy, qz = q[0], q[1], q[2], q[3]
+                    # Pico OpenXR: X右 Y上 Z后
+                    # yaw:  绕 Y 轴，左转为正
+                    yaw   =  np.arctan2(2*(qy*qw + qx*qz), 1 - 2*(qx*qx + qy*qy))
+                    # pitch: 绕 X 轴，低头为负（Pico），取反使低头为正（和机器人一致）
+                    pitch =  np.arctan2(2*(qx*qw - qy*qz), 1 - 2*(qx*qx + qz*qz))
+                    # 高度：HMD Y 轴相对初始值的变化（站起为正，蹲下为负）
+                    dy = float(np.clip((_head_zero_y[0] - head_y), -0.3, 0.3))
+                    t = dy / 0.3  # -1~1，蹲下为正
+                    def _clamp_joint(jname, val):
+                        jid = _torso_joints[jname]
+                        lo, hi = model.jnt_range[jid]
+                        data.qpos[model.jnt_qposadr[jid]] = float(np.clip(val, lo, hi))
+                    # 高度控制: ANKLE + KNEE 联动（参考官方实现）
+                    _clamp_joint("ANKLE",  0.6 + t * 0.6)
+                    _clamp_joint("KNEE",  -1.2 + t * (-0.8))
+                    # 躯干俯仰: pitch → BUTTOCK（参考官方 x_rot → joint3）
+                    _clamp_joint("BUTTOCK", 0.6 - pitch * 0.5)
+                    # 腰部偏航
+                    _clamp_joint("WAIST", yaw)
+                    # 颈部
+                    _clamp_joint("NECK1", yaw)
+                    _clamp_joint("NECK2", pitch)  # 低头为正
             else:
                 try:
                     sock_data, _ = sock.recvfrom(4096)
@@ -1231,8 +1283,6 @@ def main() -> None:
     config = ROBOT_CONFIGS[args.robot]
 
     # Apply defaults from config if user didn't override
-    if config.get("dexforce", False) and args.scene is None:
-        args.scene = str(_prepare_dexforce_urdf(config.get("dexforce_hand_type", _DEXFORCE_HAND_TYPE)))
     if args.scene is None:
         args.scene = config["scene_xml"]
     if args.position_scale is None:

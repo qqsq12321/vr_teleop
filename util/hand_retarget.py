@@ -47,8 +47,20 @@ def default_inspire_config_path() -> Path:
     )
 
 
-def default_pico4_config_path(hand_type: str = "wuji") -> Path:
+def default_pico4_config_path(hand_type: str = "wuji", side: str = "right") -> Path:
     """Return default Pico4 retarget config for supported dexterous hands."""
+    if hand_type == "linker_l20":
+        config_name = "pico4_linker_l20_left.yaml" if side == "left" else "pico4_linker_l20.yaml"
+        return (
+            Path(__file__).resolve().parent.parent
+            / "third_party"
+            / "AnyDexRetarget"
+            / "example"
+            / "config"
+            / "adaptive"
+            / "pico4"
+            / config_name
+        )
     config_name = {
         "wuji": "pico4_wuji_hand.yaml",
         "inspire": "pico4_inspire_hand.yaml",
@@ -59,6 +71,28 @@ def default_pico4_config_path(hand_type: str = "wuji") -> Path:
         Path(__file__).resolve().parent.parent
         / "config"
         / "pico4"
+        / config_name
+    )
+
+
+def default_linker_l20_config_path(input_source: str = "quest3", side: str = "right") -> Path:
+    """Return default linker_l20 retarget config for a given input source."""
+    source_map = {
+        "quest3": "quest3_linker_l20.yaml",
+        "avp": "avp_linker_l20.yaml",
+        "mediapipe": "mediapipe_linker_l20.yaml",
+        "pico4": "pico4_linker_l20_left.yaml" if side == "left" else "pico4_linker_l20.yaml",
+    }
+    folder = input_source if input_source in source_map else "quest3"
+    config_name = source_map.get(input_source, "quest3_linker_l20.yaml")
+    return (
+        Path(__file__).resolve().parent.parent
+        / "third_party"
+        / "AnyDexRetarget"
+        / "example"
+        / "config"
+        / "adaptive"
+        / folder
         / config_name
     )
 
