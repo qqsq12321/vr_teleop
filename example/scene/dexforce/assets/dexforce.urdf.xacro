@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="dexforce">
+
+  <xacro:arg name="input" default=""/>
+  <xacro:arg name="hand_type" default=""/>
+  <xacro:property name="input" value="$(arg input)"/>
+  <xacro:property name="hand_type" value="$(arg hand_type)"/>
+
+  <!-- 机器人躯干选择 -->
+  <xacro:include filename="body/robot.urdf.xacro"/>
+  <xacro:dexforce_body/>
+
+  <!-- 手部选择 -->
+  <!-- 灵巧手 -->
+  <xacro:if value="${input == 'hand'}">
+    <xacro:include filename="hand/${hand_type}/left_hand.urdf.xacro"/>
+    <xacro:include filename="hand/${hand_type}/right_hand.urdf.xacro"/>
+
+    <xacro:dexforce_left_hand  parent_link="left_ee"/>
+    <xacro:dexforce_right_hand parent_link="right_ee"/>
+  </xacro:if>
+  <!-- 夹爪 -->
+  <xacro:if value="${input == 'controller'}">
+  </xacro:if>
+
+</robot>

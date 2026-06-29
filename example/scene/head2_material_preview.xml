@@ -1,0 +1,23 @@
+<mujoco model="head_preview">
+  <compiler angle="radian"/>
+  <option gravity="0 0 0"/>
+  <visual><global offwidth="800" offheight="800"/></visual>
+  <asset>
+    <mesh name="head2_collision" file="dexforce/assets/body/collision/head/head2.obj"/>
+    <mesh name="m003" file="dexforce/assets/body/visual/head/split/head2_材质.003.obj"/>
+    <mesh name="myellow" file="dexforce/assets/body/visual/head/split/head2_材质.obj"/>
+    <mesh name="m002" file="dexforce/assets/body/visual/head/split/head2_材质.002.obj"/>
+    <mesh name="mgray" file="dexforce/assets/body/visual/head/split/head2_Material.obj"/>
+    <mesh name="m001" file="dexforce/assets/body/visual/head/split/head2_材质.001.obj"/>
+  </asset>
+  <worldbody>
+    <body>
+      <geom type="mesh" mesh="head2_collision" rgba="0.93 0.76 0.22 0.15"/>
+      <geom type="mesh" mesh="m003" rgba="1 0 0 1"/>
+      <geom type="mesh" mesh="myellow" rgba="1 1 0 0.2"/>
+      <geom type="mesh" mesh="m002" rgba="0 1 0 1"/>
+      <geom type="mesh" mesh="mgray" rgba="0 0 1 1"/>
+      <geom type="mesh" mesh="m001" rgba="1 0 1 1"/>
+    </body>
+  </worldbody>
+</mujoco>
