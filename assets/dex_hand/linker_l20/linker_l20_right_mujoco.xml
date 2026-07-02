@@ -1,0 +1,139 @@
+<mujoco model="linker_l20_right">
+  <compiler angle="radian"/>
+
+  <asset>
+    <mesh name="connector_link" content_type="model/obj" file="collision/right_hand/connector_link.obj"/>
+    <mesh name="hand_base_link" content_type="model/obj" file="collision/right_hand/hand_base_link.obj"/>
+    <mesh name="t_cmc_roll_link" content_type="model/obj" file="collision/right_hand/t_cmc_roll_link.obj"/>
+    <mesh name="t_cmc_yaw_link" content_type="model/obj" file="collision/right_hand/t_cmc_yaw_link.obj"/>
+    <mesh name="t_cmc_pitch_link" content_type="model/obj" file="collision/right_hand/t_cmc_pitch_link.obj"/>
+    <mesh name="t_mcp_link" content_type="model/obj" file="collision/right_hand/t_mcp_link.obj"/>
+    <mesh name="t_ip_link" content_type="model/obj" file="collision/right_hand/t_ip_link.obj"/>
+    <mesh name="if_mcp_roll_link" content_type="model/obj" file="collision/right_hand/if_mcp_roll_link.obj"/>
+    <mesh name="if_mcp_pitch_link" content_type="model/obj" file="collision/right_hand/if_mcp_pitch_link.obj"/>
+    <mesh name="if_pip_link" content_type="model/obj" file="collision/right_hand/if_pip_link.obj"/>
+    <mesh name="if_dip_link" content_type="model/obj" file="collision/right_hand/if_dip_link.obj"/>
+    <mesh name="mf_mcp_roll_link" content_type="model/obj" file="collision/right_hand/mf_mcp_roll_link.obj"/>
+    <mesh name="mf_mcp_pitch_link" content_type="model/obj" file="collision/right_hand/mf_mcp_pitch_link.obj"/>
+    <mesh name="mf_pip_link" content_type="model/obj" file="collision/right_hand/mf_pip_link.obj"/>
+    <mesh name="mf_dip_link" content_type="model/obj" file="collision/right_hand/mf_dip_link.obj"/>
+    <mesh name="rf_mcp_roll_link" content_type="model/obj" file="collision/right_hand/rf_mcp_roll_link.obj"/>
+    <mesh name="rf_mcp_pitch_link" content_type="model/obj" file="collision/right_hand/rf_mcp_pitch_link.obj"/>
+    <mesh name="rf_pip_link" content_type="model/obj" file="collision/right_hand/rf_pip_link.obj"/>
+    <mesh name="rf_dip_link" content_type="model/obj" file="collision/right_hand/rf_dip_link.obj"/>
+    <mesh name="lf_mcp_roll_link" content_type="model/obj" file="collision/right_hand/lf_mcp_roll_link.obj"/>
+    <mesh name="lf_mcp_pitch_link" content_type="model/obj" file="collision/right_hand/lf_mcp_pitch_link.obj"/>
+    <mesh name="lf_pip_link" content_type="model/obj" file="collision/right_hand/lf_pip_link.obj"/>
+    <mesh name="lf_dip_link" content_type="model/obj" file="collision/right_hand/lf_dip_link.obj"/>
+  </asset>
+
+  <worldbody>
+    <geom quat="0.707107 0 0 -0.707107" type="mesh" mesh="connector_link"/>
+    <geom pos="0 0 0.036" quat="0.707107 0 0 -0.707107" type="mesh" rgba="0.792157 0.819608 0.929412 1" mesh="hand_base_link"/>
+    <body name="right_t_cmc_roll_link" pos="0.01 -0.01916 0.0796" quat="0.707107 0 0 -0.707107">
+      <inertial pos="0.0121301 -0.00368626 0.000253014" quat="0.982982 0.179074 -0.00243076 -0.0408908" mass="0.0173128" diaginertia="4.06051e-06 2.47925e-06 2.0386e-06"/>
+      <joint name="RIGHT_T_CMC_ROLL" pos="0 0 0" axis="1 0 0" range="0 1.39" actuatorfrcrange="-1 1"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="t_cmc_roll_link"/>
+      <body name="right_t_cmc_yaw_link" pos="0.019845 0 0" quat="0.926488 -0.376324 0 0">
+        <inertial pos="0.00274805 0.00768601 0.00362009" quat="0.569334 0.763034 0.297144 -0.0730934" mass="0.0129293" diaginertia="1.26799e-06 1.26799e-06 1.26799e-06"/>
+        <joint name="RIGHT_T_CMC_YAW" pos="0 0 0" axis="0 0 -1" range="0 1.57" actuatorfrcrange="-1 1"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="t_cmc_yaw_link"/>
+        <body name="right_t_cmc_pitch_link" pos="0.0088264 0.024243 0.0005" quat="0.49419 -0.415774 -0.291116 -0.705804">
+          <inertial pos="0.00680467 -0.000348946 0.032903" quat="0.705364 -0.00144645 -0.00309598 0.708837" mass="0.031145" diaginertia="1.37915e-05 1.14968e-05 3.56879e-06"/>
+          <joint name="RIGHT_T_CMC_PITCH" pos="0 0 0" axis="0 1 0" range="0 0.83" actuatorfrcrange="-1 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="t_cmc_pitch_link"/>
+          <body name="right_t_mcp_link" pos="0.012702 0 0.062726">
+            <inertial pos="-0.00268743 0.000568291 0.0118504" quat="0.705684 -0.0690823 -0.0784797 0.70077" mass="0.00549016" diaginertia="6.23243e-07 4.89828e-07 2.23369e-07"/>
+            <joint name="RIGHT_T_MCP" pos="0 0 0" axis="0 1 0" range="0 1.25" actuatorfrcrange="-1 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="t_mcp_link"/>
+            <body name="right_t_ip_link" pos="-0.0048365 0 0.034223">
+              <inertial pos="-0.000650482 2.41301e-05 0.0111943" quat="0.692326 0.16872 0.173364 0.679826" mass="0.00585464" diaginertia="4.37719e-07 3.96856e-07 1.25926e-07"/>
+              <joint name="RIGHT_T_IP" pos="0 0 0" axis="0 1 0" range="0 1.29" actuatorfrcrange="-1 1"/>
+              <geom type="mesh" rgba="1 1 1 1" mesh="t_ip_link"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="right_if_mcp_roll_link" pos="0.03525 -0.0038 0.1841" quat="0.707107 0 0 -0.707107">
+      <inertial pos="-0.00794297 3.01911e-07 0.00220112" quat="0.599926 0.599926 -0.374285 0.374285" mass="0.000895534" diaginertia="4.67037e-08 3.17355e-08 2.8544e-08"/>
+      <joint name="RIGHT_IF_MCP_ROLL" pos="0 0 0" axis="1 0 0" range="-0.23 0.23" actuatorfrcrange="-1 1"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="if_mcp_roll_link"/>
+      <body name="right_if_mcp_pitch_link" pos="-0.0021302 0 0">
+        <inertial pos="-0.00114166 -3.47779e-05 0.0228931" quat="0.707049 0.0169067 0.0167045 0.706765" mass="0.00450936" diaginertia="6.74215e-07 6.67898e-07 1.34556e-07"/>
+        <joint name="RIGHT_IF_MCP_PITCH" pos="0 0 0" axis="0 1 0" range="0 1.22" actuatorfrcrange="-1 1"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="if_mcp_pitch_link"/>
+        <body name="right_if_pip_link" pos="-0.0041946 0 0.044819">
+          <inertial pos="-0.00020683 -2.69763e-06 0.0167056" quat="0.998522 -1.90424e-06 0.0543408 -3.49908e-05" mass="0.00237862" diaginertia="2.31192e-07 1.76802e-07 9.46799e-08"/>
+          <joint name="RIGHT_IF_PIP" pos="0 0 0" axis="0 1 0" range="0 1.75" actuatorfrcrange="-1 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="if_pip_link"/>
+          <body name="right_if_dip_link" pos="0.0028245 0 0.031696">
+            <inertial pos="-0.0081626 -2.26722e-05 0.0081182" quat="0.942748 -0.00110874 0.33349 -0.00313432" mass="0.00334176" diaginertia="2.07627e-07 1.78095e-07 8.60829e-08"/>
+            <joint name="RIGHT_IF_DIP" pos="0 0 0" axis="0 1 0" range="0 1.55" actuatorfrcrange="-1 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="if_dip_link"/>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="right_mf_mcp_roll_link" pos="0.01175 -0.0038 0.1886" quat="0.707107 0 0 -0.707107">
+      <inertial pos="-0.00794297 3.01911e-07 0.00220112" quat="0.599926 0.599926 -0.374285 0.374285" mass="0.000895534" diaginertia="4.67037e-08 3.17355e-08 2.8544e-08"/>
+      <joint name="RIGHT_MF_MCP_ROLL" pos="0 0 0" axis="1 0 0" range="-0.23 0.23" actuatorfrcrange="-1 1"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="mf_mcp_roll_link"/>
+      <body name="right_mf_mcp_pitch_link" pos="-0.0021302 0 0">
+        <inertial pos="-0.00114166 -3.47779e-05 0.0228931" quat="0.707049 0.0169067 0.0167045 0.706765" mass="0.00450936" diaginertia="6.74215e-07 6.67898e-07 1.34556e-07"/>
+        <joint name="RIGHT_MF_MCP_PITCH" pos="0 0 0" axis="0 1 0" range="0 1.22" actuatorfrcrange="-1 1"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="mf_mcp_pitch_link"/>
+        <body name="right_mf_pip_link" pos="-0.0041946 0 0.044819">
+          <inertial pos="-0.00020683 -2.69763e-06 0.0167056" quat="0.998522 -1.90425e-06 0.0543408 -3.4991e-05" mass="0.00237862" diaginertia="2.31192e-07 1.76802e-07 9.46799e-08"/>
+          <joint name="RIGHT_MF_PIP" pos="0 0 0" axis="0 1 0" range="0 1.75" actuatorfrcrange="-1 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="mf_pip_link"/>
+          <body name="right_mf_dip_link" pos="0.0028245 0 0.031696">
+            <inertial pos="-0.0081626 -2.26722e-05 0.0081182" quat="0.942748 -0.00110874 0.33349 -0.00313432" mass="0.00334176" diaginertia="2.07627e-07 1.78095e-07 8.60829e-08"/>
+            <joint name="RIGHT_MF_DIP" pos="0 0 0" axis="0 1 0" range="0 1.55" actuatorfrcrange="-1 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="mf_dip_link"/>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="right_rf_mcp_roll_link" pos="-0.01175 -0.0038 0.1841" quat="0.707107 0 0 -0.707107">
+      <inertial pos="-0.00794297 3.01911e-07 0.00220112" quat="0.599926 0.599926 -0.374285 0.374285" mass="0.000895534" diaginertia="4.67037e-08 3.17355e-08 2.8544e-08"/>
+      <joint name="RIGHT_RF_MCP_ROLL" pos="0 0 0" axis="1 0 0" range="-0.23 0.23" actuatorfrcrange="-1 1"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="rf_mcp_roll_link"/>
+      <body name="right_rf_mcp_pitch_link" pos="-0.0021302 0 0">
+        <inertial pos="-0.00114166 -3.47779e-05 0.0228931" quat="0.707049 0.0169067 0.0167045 0.706765" mass="0.00450936" diaginertia="6.74215e-07 6.67898e-07 1.34556e-07"/>
+        <joint name="RIGHT_RF_MCP_PITCH" pos="0 0 0" axis="0 1 0" range="0 1.22" actuatorfrcrange="-1 1"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="rf_mcp_pitch_link"/>
+        <body name="right_rf_pip_link" pos="-0.0041946 0 0.044819">
+          <inertial pos="-0.00020683 -2.69763e-06 0.0167056" quat="0.998522 -1.90424e-06 0.0543408 -3.49908e-05" mass="0.00237862" diaginertia="2.31192e-07 1.76802e-07 9.46799e-08"/>
+          <joint name="RIGHT_RF_PIP" pos="0 0 0" axis="0 1 0" range="0 1.75" actuatorfrcrange="-1 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="rf_pip_link"/>
+          <body name="right_rf_dip_link" pos="0.0028245 0 0.031696">
+            <inertial pos="-0.0081626 -2.26723e-05 0.0081182" quat="0.942748 -0.00110871 0.33349 -0.00313421" mass="0.00334176" diaginertia="2.07627e-07 1.78095e-07 8.60829e-08"/>
+            <joint name="RIGHT_RF_DIP" pos="0 0 0" axis="0 1 0" range="0 1.55" actuatorfrcrange="-1 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="rf_dip_link"/>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="right_lf_mcp_roll_link" pos="-0.03525 -0.0038 0.1796" quat="0.707107 0 0 -0.707107">
+      <inertial pos="-0.00794297 3.01911e-07 0.00220112" quat="0.599926 0.599926 -0.374285 0.374285" mass="0.000895534" diaginertia="4.67037e-08 3.17355e-08 2.8544e-08"/>
+      <joint name="RIGHT_LF_MCP_ROLL" pos="0 0 0" axis="1 0 0" range="-0.23 0.23" actuatorfrcrange="-1 1"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="lf_mcp_roll_link"/>
+      <body name="right_lf_mcp_pitch_link" pos="-0.0021302 0 0">
+        <inertial pos="-0.00114166 -3.47779e-05 0.0228931" quat="0.707049 0.0169067 0.0167045 0.706765" mass="0.00450936" diaginertia="6.74215e-07 6.67898e-07 1.34556e-07"/>
+        <joint name="RIGHT_LF_MCP_PITCH" pos="0 0 0" axis="0 1 0" range="0 1.22" actuatorfrcrange="-1 1"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="lf_mcp_pitch_link"/>
+        <body name="right_lf_pip_link" pos="-0.0041946 0 0.044819">
+          <inertial pos="-0.00020683 -2.69763e-06 0.0167056" quat="0.998522 -1.90424e-06 0.0543408 -3.49908e-05" mass="0.00237862" diaginertia="2.31192e-07 1.76802e-07 9.46799e-08"/>
+          <joint name="RIGHT_LF_PIP" pos="0 0 0" axis="0 1 0" range="0 1.75" actuatorfrcrange="-1 1"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="lf_pip_link"/>
+          <body name="right_lf_dip_link" pos="0.0028245 0 0.031696">
+            <inertial pos="-0.0081626 -2.26722e-05 0.0081182" quat="0.942748 -0.00110873 0.33349 -0.0031343" mass="0.00334176" diaginertia="2.07627e-07 1.78095e-07 8.60829e-08"/>
+            <joint name="RIGHT_LF_DIP" pos="0 0 0" axis="0 1 0" range="0 1.55" actuatorfrcrange="-1 1"/>
+            <geom type="mesh" rgba="1 1 1 1" mesh="lf_dip_link"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

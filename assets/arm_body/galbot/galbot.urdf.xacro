@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="galbot">
+
+  <xacro:arg name="hand_type" default=""/>
+  <xacro:property name="hand_type" value="$(arg hand_type)"/>
+
+  <xacro:include filename="robot.urdf.xacro"/>
+  <xacro:galbot_body/>
+
+  <xacro:if value="${hand_type != ''}" >
+    <xacro:include filename="../../dex_hand/${hand_type}/left_hand.urdf.xacro"/>
+    <xacro:include filename="../../dex_hand/${hand_type}/right_hand.urdf.xacro"/>
+    <xacro:left_hand parent_link="left_arm_end_effector_mount_link"/>
+    <xacro:right_hand parent_link="right_arm_end_effector_mount_link"/>
+  </xacro:if>
+</robot>
