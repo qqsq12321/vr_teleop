@@ -1,0 +1,369 @@
+<mujoco model="rm65 dual-arm + dual inspire hands">
+  <compiler angle="radian"/>
+
+  <statistic center="0 0 0.4" extent="1"/>
+
+  <option integrator="implicitfast" cone="elliptic" impratio="10"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-45" elevation="-20"/>
+  </visual>
+
+  <default>
+    <default class="rm65">
+      <default class="rm65/visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" rgba="0.82 0.82 0.82 1"/>
+      </default>
+      <default class="rm65/collision">
+        <geom type="mesh" group="3" contype="0" conaffinity="0"/>
+      </default>
+      <default class="rm65_actuator">
+        <position kp="150" kv="40" forcerange="-100 100"/>
+      </default>
+    </default>
+
+    <default class="inspire_hand">
+      <joint damping="0.05"/>
+      <position kp="3" dampratio="1"/>
+      <geom density="800"/>
+      <default class="inspire_hand/visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" rgba="0.65 0.65 0.65 1"/>
+      </default>
+    </default>
+
+    <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="4"/>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.6 0.6 0.6" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.5 0.5 0.5" rgb2="0.3 0.3 0.3"
+      markrgb="0.4 0.4 0.4" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+
+    <!-- RM65 arm meshes (shared) -->
+    <mesh name="rm65_base_link" file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/base_link.STL"/>
+    <mesh name="rm65_link_1"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_1.STL"/>
+    <mesh name="rm65_link_2"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_2.STL"/>
+    <mesh name="rm65_link_3"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_3.STL"/>
+    <mesh name="rm65_link_4"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_4.STL"/>
+    <mesh name="rm65_link_5"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_5.STL"/>
+    <mesh name="rm65_link_6"    file="../../third_party/rm_models/RM65/urdf/RM65-6F/meshes/link_6.STL"/>
+
+    <!-- Inspire RH56DFX right hand meshes (AnyDexRetarget) -->
+    <mesh name="inspire_right_base_link"             file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_base_link.stl"/>
+    <mesh name="inspire_right_thumb_proximal_base"   file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_thumb_proximal_base.stl"/>
+    <mesh name="inspire_right_thumb_proximal"        file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_thumb_proximal.stl"/>
+    <mesh name="inspire_right_thumb_intermediate"    file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_thumb_intermediate.stl"/>
+    <mesh name="inspire_right_thumb_distal"          file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_thumb_distal.stl"/>
+    <mesh name="inspire_right_index_proximal"        file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_index_proximal.stl"/>
+    <mesh name="inspire_right_index_intermediate"    file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_index_intermediate.stl"/>
+    <mesh name="inspire_right_middle_intermediate"   file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_middle_intermediate.stl"/>
+    <mesh name="inspire_right_pinky_intermediate"    file="../../third_party/AnyDexRetarget/assets/inspire_hand/meshes/mujoco_stl/right_pinky_intermediate.stl"/>
+
+    <!-- Inspire left hand meshes (AnyDexRetarget - official left hand) -->
+    <mesh name="inspire_left_base_link"             file="rm65_inspire_dual_assets/left_base_link.stl"/>
+    <mesh name="inspire_left_thumb_proximal_base"   file="rm65_inspire_dual_assets/left_thumb_proximal_base.stl"/>
+    <mesh name="inspire_left_thumb_proximal"        file="rm65_inspire_dual_assets/left_thumb_proximal.stl"/>
+    <mesh name="inspire_left_thumb_intermediate"    file="rm65_inspire_dual_assets/left_thumb_intermediate.stl"/>
+    <mesh name="inspire_left_thumb_distal"          file="rm65_inspire_dual_assets/left_thumb_distal.stl"/>
+    <mesh name="inspire_left_index_proximal"        file="rm65_inspire_dual_assets/left_index_proximal.stl"/>
+    <mesh name="inspire_left_index_intermediate"    file="rm65_inspire_dual_assets/left_index_intermediate.stl"/>
+    <mesh name="inspire_left_middle_proximal"       file="rm65_inspire_dual_assets/left_index_proximal.stl"/>
+    <mesh name="inspire_left_middle_intermediate"   file="rm65_inspire_dual_assets/left_middle_intermediate.stl"/>
+    <mesh name="inspire_left_ring_proximal"         file="rm65_inspire_dual_assets/left_index_proximal.stl"/>
+    <mesh name="inspire_left_ring_intermediate"     file="rm65_inspire_dual_assets/left_index_intermediate.stl"/>
+    <mesh name="inspire_left_pinky_proximal"        file="rm65_inspire_dual_assets/left_index_proximal.stl"/>
+    <mesh name="inspire_left_pinky_intermediate"    file="rm65_inspire_dual_assets/left_pinky_intermediate.stl"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <!-- ==================== LEFT ARM ==================== -->
+    <body name="left/base_link" pos="0 0.3 0" childclass="rm65">
+      <geom class="rm65/visual" mesh="rm65_base_link"/>
+      <geom class="rm65/collision" mesh="rm65_base_link"/>
+
+      <body name="left/link_1" pos="0 0 0.2405">
+        <joint name="left/joint_1" type="hinge" axis="0 0 1" range="-3.106 3.106"/>
+        <geom class="rm65/visual" mesh="rm65_link_1"/>
+        <geom class="rm65/collision" mesh="rm65_link_1"/>
+
+        <body name="left/link_2" pos="0 0 0" quat="0.499998 0.500000 -0.500000 0.500002">
+          <joint name="left/joint_2" type="hinge" axis="0 0 1" range="-2.2689 2.2689"/>
+          <geom class="rm65/visual" mesh="rm65_link_2"/>
+          <geom class="rm65/collision" mesh="rm65_link_2"/>
+
+          <body name="left/link_3" pos="0.256 0 0" quat="0.707105 0 0 0.707108">
+            <joint name="left/joint_3" type="hinge" axis="0 0 1" range="-2.356 2.356"/>
+            <geom class="rm65/visual" mesh="rm65_link_3"/>
+            <geom class="rm65/collision" mesh="rm65_link_3"/>
+
+            <body name="left/link_4" pos="0 -0.21 0" quat="0.707105 0.707108 0 0">
+              <joint name="left/joint_4" type="hinge" axis="0 0 1" range="-3.106 3.106"/>
+              <geom class="rm65/visual" mesh="rm65_link_4"/>
+              <geom class="rm65/collision" mesh="rm65_link_4"/>
+
+              <body name="left/link_5" pos="0 0 0" quat="0.707105 -0.707108 0 0">
+                <joint name="left/joint_5" type="hinge" axis="0 0 1" range="-2.234 2.234"/>
+                <geom class="rm65/visual" mesh="rm65_link_5"/>
+                <geom class="rm65/collision" mesh="rm65_link_5"/>
+
+                <body name="left/link_6" pos="0 -0.1725 0" quat="0.707105 0.707108 0 0">
+                  <joint name="left/joint_6" type="hinge" axis="0 0 1" range="-6.28 6.28"/>
+                  <geom class="rm65/visual" mesh="rm65_link_6"/>
+                  <geom class="rm65/collision" mesh="rm65_link_6"/>
+
+                  <site name="left/rm65_ee_site" pos="0 0 0.05" quat="1 0 0 0"/>
+
+                  <!-- Left Inspire hand (from inspire_hand_left.urdf) -->
+                  <body name="left/palm" pos="0 0 0"
+                        quat="-1 1 0 0"
+                        childclass="inspire_hand">
+                    <geom type="mesh" mesh="inspire_left_base_link" class="inspire_hand/visual"/>
+
+                    <body name="left/thumb_proximal_base" pos="-0.01696 -0.0691 0.02045" quat="0.499998 0.500000 -0.500000 0.500002">
+                      <joint name="left/thumb_proximal_yaw_joint" axis="0 0 1" range="0 1.308"/>
+                      <geom type="mesh" mesh="inspire_left_thumb_proximal_base" class="inspire_hand/visual"/>
+                      <body name="left/thumb_proximal" pos="0.0099867 0.0098242 -0.0089" quat="0.705391 -0.705391 -0.059939 0.059939">
+                        <joint name="left/thumb_proximal_pitch_joint" axis="0 0 -1" range="0 0.6"/>
+                        <geom type="mesh" mesh="inspire_left_thumb_proximal" class="inspire_hand/visual"/>
+                        <body name="left/thumb_intermediate" pos="0.04407 -0.034553 -0.0008">
+                          <joint name="left/thumb_intermediate_joint" axis="0 0 -1" range="0 0.8"/>
+                          <geom type="mesh" mesh="inspire_left_thumb_intermediate" class="inspire_hand/visual"/>
+                          <body name="left/thumb_distal" pos="0.020248 -0.010156 -0.0012">
+                            <joint name="left/thumb_distal_joint" axis="0 0 -1" range="0 0.4"/>
+                            <geom type="mesh" mesh="inspire_left_thumb_distal" class="inspire_hand/visual"/>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+
+                    <body name="left/index_proximal" pos="0.00028533 -0.13653 0.032268" quat="0.999848 -0.017452 0.000000 0.000000">
+                      <joint name="left/index_proximal_joint" axis="0 0 -1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_left_index_proximal" class="inspire_hand/visual"/>
+                      <body name="left/index_intermediate" pos="-0.0026138 -0.032026 -0.001">
+                        <joint name="left/index_intermediate_joint" axis="0 0 -1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_left_index_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="left/middle_proximal" pos="0.00028533 -0.1371 0.01295" quat="1.000000 0.000000 0.000000 0.000000">
+                      <joint name="left/middle_proximal_joint" axis="0 0 -1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_left_middle_proximal" class="inspire_hand/visual"/>
+                      <body name="left/middle_intermediate" pos="-0.0024229 -0.032041 -0.001">
+                        <joint name="left/middle_intermediate_joint" axis="0 0 -1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_left_middle_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="left/ring_proximal" pos="0.00028533 -0.13691 -0.0062872" quat="0.999657 0.026176 0.000000 0.000000">
+                      <joint name="left/ring_proximal_joint" axis="0 0 -1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_left_ring_proximal" class="inspire_hand/visual"/>
+                      <body name="left/ring_intermediate" pos="-0.0024229 -0.032041 -0.001">
+                        <joint name="left/ring_intermediate_joint" axis="0 0 -1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_left_ring_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="left/pinky_proximal" pos="0.00028533 -0.13571 -0.025488" quat="0.998630 0.052336 0.000000 0.000000">
+                      <joint name="left/pinky_proximal_joint" axis="0 0 -1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_left_pinky_proximal" class="inspire_hand/visual"/>
+                      <body name="left/pinky_intermediate" pos="-0.0024229 -0.032041 -0.001">
+                        <joint name="left/pinky_intermediate_joint" axis="0 0 -1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_left_pinky_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+                  </body>
+
+                  <camera name="left/wrist_cam" pos="0 0.05 0.0" euler="3.14159 0 0" fovy="70"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- ==================== RIGHT ARM ==================== -->
+    <body name="right/base_link" pos="0 -0.3 0" childclass="rm65">
+      <geom class="rm65/visual" mesh="rm65_base_link"/>
+      <geom class="rm65/collision" mesh="rm65_base_link"/>
+
+      <body name="right/link_1" pos="0 0 0.2405">
+        <joint name="right/joint_1" type="hinge" axis="0 0 1" range="-3.106 3.106"/>
+        <geom class="rm65/visual" mesh="rm65_link_1"/>
+        <geom class="rm65/collision" mesh="rm65_link_1"/>
+
+        <body name="right/link_2" pos="0 0 0" quat="0.499998 0.500000 -0.500000 0.500002">
+          <joint name="right/joint_2" type="hinge" axis="0 0 1" range="-2.2689 2.2689"/>
+          <geom class="rm65/visual" mesh="rm65_link_2"/>
+          <geom class="rm65/collision" mesh="rm65_link_2"/>
+
+          <body name="right/link_3" pos="0.256 0 0" quat="0.707105 0 0 0.707108">
+            <joint name="right/joint_3" type="hinge" axis="0 0 1" range="-2.356 2.356"/>
+            <geom class="rm65/visual" mesh="rm65_link_3"/>
+            <geom class="rm65/collision" mesh="rm65_link_3"/>
+
+            <body name="right/link_4" pos="0 -0.21 0" quat="0.707105 0.707108 0 0">
+              <joint name="right/joint_4" type="hinge" axis="0 0 1" range="-3.106 3.106"/>
+              <geom class="rm65/visual" mesh="rm65_link_4"/>
+              <geom class="rm65/collision" mesh="rm65_link_4"/>
+
+              <body name="right/link_5" pos="0 0 0" quat="0.707105 -0.707108 0 0">
+                <joint name="right/joint_5" type="hinge" axis="0 0 1" range="-2.234 2.234"/>
+                <geom class="rm65/visual" mesh="rm65_link_5"/>
+                <geom class="rm65/collision" mesh="rm65_link_5"/>
+
+                <body name="right/link_6" pos="0 -0.1725 0" quat="0.707105 0.707108 0 0">
+                  <joint name="right/joint_6" type="hinge" axis="0 0 1" range="-6.28 6.28"/>
+                  <geom class="rm65/visual" mesh="rm65_link_6"/>
+                  <geom class="rm65/collision" mesh="rm65_link_6"/>
+
+                  <site name="right/rm65_ee_site" pos="0 0 0.05" quat="1 0 0 0"/>
+
+                  <!-- Right Inspire hand (same as single-arm scene) -->
+                  <body name="right/palm" pos="0 0 0"
+                        quat="-1 1 0 0"
+                        childclass="inspire_hand">
+                    <geom type="mesh" mesh="inspire_right_base_link" class="inspire_hand/visual"/>
+
+                    <body name="right/thumb_proximal_base" pos="-0.01696 -0.0691 -0.02045" quat="0.499998 0.500000 -0.500000 0.500002">
+                      <joint name="right/thumb_proximal_yaw_joint" axis="0 0 -1" range="0 1.308"/>
+                      <geom type="mesh" mesh="inspire_right_thumb_proximal_base" class="inspire_hand/visual"/>
+                      <body name="right/thumb_proximal" pos="-0.0088099 0.010892 -0.00925" quat="0.099684 0.099685 0.700046 0.700044">
+                        <joint name="right/thumb_proximal_pitch_joint" axis="0 0 1" range="0 0.6"/>
+                        <geom type="mesh" mesh="inspire_right_thumb_proximal" class="inspire_hand/visual"/>
+                        <body name="right/thumb_intermediate" pos="0.04407 0.034553 -0.0008">
+                          <joint name="right/thumb_intermediate_joint" axis="0 0 1" range="0 0.8"/>
+                          <geom type="mesh" mesh="inspire_right_thumb_intermediate" class="inspire_hand/visual"/>
+                          <body name="right/thumb_distal" pos="0.020248 0.010156 -0.0012">
+                            <joint name="right/thumb_distal_joint" axis="0 0 1" range="0 0.4"/>
+                            <geom type="mesh" mesh="inspire_right_thumb_distal" class="inspire_hand/visual"/>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+
+                    <body name="right/index_proximal" pos="0.00028533 -0.13653 -0.032268" quat="0.017445 -0.999848 0.000000 0.000000">
+                      <joint name="right/index_proximal_joint" axis="0 0 1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_right_index_proximal" class="inspire_hand/visual"/>
+                      <body name="right/index_intermediate" pos="-0.0026138 0.032026 -0.001">
+                        <joint name="right/index_intermediate_joint" axis="0 0 1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_right_index_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="right/middle_proximal" pos="0.00028533 -0.1371 -0.01295" quat="-0.000004 -1.000000 0.000000 0.000000">
+                      <joint name="right/middle_proximal_joint" axis="0 0 1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_right_index_proximal" class="inspire_hand/visual"/>
+                      <body name="right/middle_intermediate" pos="-0.0024229 0.032041 -0.001">
+                        <joint name="right/middle_intermediate_joint" axis="0 0 1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_right_middle_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="right/ring_proximal" pos="0.00028533 -0.13691 0.0062872" quat="0.026193 0.999657 0.000000 0.000000">
+                      <joint name="right/ring_proximal_joint" axis="0 0 1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_right_index_proximal" class="inspire_hand/visual"/>
+                      <body name="right/ring_intermediate" pos="-0.0024229 0.032041 -0.001">
+                        <joint name="right/ring_intermediate_joint" axis="0 0 1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_right_index_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+
+                    <body name="right/pinky_proximal" pos="0.00028533 -0.13571 0.025488" quat="0.052322 0.998630 0.000000 0.000000">
+                      <joint name="right/pinky_proximal_joint" axis="0 0 1" range="0 1.47"/>
+                      <geom type="mesh" mesh="inspire_right_index_proximal" class="inspire_hand/visual"/>
+                      <body name="right/pinky_intermediate" pos="-0.0024229 0.032041 -0.001">
+                        <joint name="right/pinky_intermediate_joint" axis="0 0 1" range="-0.04545 1.56"/>
+                        <geom type="mesh" mesh="inspire_right_pinky_intermediate" class="inspire_hand/visual"/>
+                      </body>
+                    </body>
+                  </body>
+
+                  <camera name="right/wrist_cam" pos="0 0.05 0.0" euler="3.14159 0 0" fovy="70"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <camera name="scene_cam" pos="1.2 -0.8 0.9" xyaxes="0.6 0.8 0 -0.3 0.22 0.9" fovy="45"/>
+  </worldbody>
+
+  <actuator>
+    <!-- LEFT RM65 arm (6 DOF) -->
+    <position class="rm65_actuator" name="left/joint_1" joint="left/joint_1" ctrlrange="-3.106 3.106"/>
+    <position class="rm65_actuator" name="left/joint_2" joint="left/joint_2" ctrlrange="-2.2689 2.2689"/>
+    <position class="rm65_actuator" name="left/joint_3" joint="left/joint_3" ctrlrange="-2.356 2.356"/>
+    <position class="rm65_actuator" name="left/joint_4" joint="left/joint_4" ctrlrange="-3.106 3.106"/>
+    <position class="rm65_actuator" name="left/joint_5" joint="left/joint_5" ctrlrange="-2.234 2.234"/>
+    <position class="rm65_actuator" name="left/joint_6" joint="left/joint_6" ctrlrange="-6.28 6.28"/>
+    <!-- LEFT Inspire hand (12 DOF) - same as right hand -->
+    <position class="inspire_hand" name="left/thumb_proximal_yaw"   joint="left/thumb_proximal_yaw_joint"   ctrlrange="0 1.308"/>
+    <position class="inspire_hand" name="left/thumb_proximal_pitch" joint="left/thumb_proximal_pitch_joint" ctrlrange="0 0.6"/>
+    <position class="inspire_hand" name="left/thumb_intermediate"   joint="left/thumb_intermediate_joint"   ctrlrange="0 0.8"/>
+    <position class="inspire_hand" name="left/thumb_distal"         joint="left/thumb_distal_joint"         ctrlrange="0 0.4"/>
+    <position class="inspire_hand" name="left/index_proximal"       joint="left/index_proximal_joint"       ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="left/index_intermediate"   joint="left/index_intermediate_joint"   ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="left/middle_proximal"      joint="left/middle_proximal_joint"      ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="left/middle_intermediate"  joint="left/middle_intermediate_joint"  ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="left/ring_proximal"        joint="left/ring_proximal_joint"        ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="left/ring_intermediate"    joint="left/ring_intermediate_joint"    ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="left/pinky_proximal"       joint="left/pinky_proximal_joint"       ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="left/pinky_intermediate"   joint="left/pinky_intermediate_joint"   ctrlrange="-0.04545 1.56"/>
+
+    <!-- RIGHT RM65 arm (6 DOF) -->
+    <position class="rm65_actuator" name="right/joint_1" joint="right/joint_1" ctrlrange="-3.106 3.106"/>
+    <position class="rm65_actuator" name="right/joint_2" joint="right/joint_2" ctrlrange="-2.2689 2.2689"/>
+    <position class="rm65_actuator" name="right/joint_3" joint="right/joint_3" ctrlrange="-2.356 2.356"/>
+    <position class="rm65_actuator" name="right/joint_4" joint="right/joint_4" ctrlrange="-3.106 3.106"/>
+    <position class="rm65_actuator" name="right/joint_5" joint="right/joint_5" ctrlrange="-2.234 2.234"/>
+    <position class="rm65_actuator" name="right/joint_6" joint="right/joint_6" ctrlrange="-6.28 6.28"/>
+    <!-- RIGHT Inspire hand (12 DOF) -->
+    <position class="inspire_hand" name="right/thumb_proximal_yaw"   joint="right/thumb_proximal_yaw_joint"   ctrlrange="0 1.308"/>
+    <position class="inspire_hand" name="right/thumb_proximal_pitch" joint="right/thumb_proximal_pitch_joint" ctrlrange="0 0.6"/>
+    <position class="inspire_hand" name="right/thumb_intermediate"   joint="right/thumb_intermediate_joint"   ctrlrange="0 0.8"/>
+    <position class="inspire_hand" name="right/thumb_distal"         joint="right/thumb_distal_joint"         ctrlrange="0 0.4"/>
+    <position class="inspire_hand" name="right/index_proximal"       joint="right/index_proximal_joint"       ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="right/index_intermediate"   joint="right/index_intermediate_joint"   ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="right/middle_proximal"      joint="right/middle_proximal_joint"      ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="right/middle_intermediate"  joint="right/middle_intermediate_joint"  ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="right/ring_proximal"        joint="right/ring_proximal_joint"        ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="right/ring_intermediate"    joint="right/ring_intermediate_joint"    ctrlrange="-0.04545 1.56"/>
+    <position class="inspire_hand" name="right/pinky_proximal"       joint="right/pinky_proximal_joint"       ctrlrange="0 1.47"/>
+    <position class="inspire_hand" name="right/pinky_intermediate"   joint="right/pinky_intermediate_joint"   ctrlrange="-0.04545 1.56"/>
+  </actuator>
+
+  <equality>
+    <!-- Left thumb mimic joints -->
+    <joint joint1="left/thumb_intermediate_joint" joint2="left/thumb_proximal_pitch_joint" polycoef="0 1.334 0 0 0"/>
+    <joint joint1="left/thumb_distal_joint" joint2="left/thumb_proximal_pitch_joint" polycoef="0 0.667 0 0 0"/>
+    <!-- Right thumb mimic joints -->
+    <joint joint1="right/thumb_intermediate_joint" joint2="right/thumb_proximal_pitch_joint" polycoef="0 1.334 0 0 0"/>
+    <joint joint1="right/thumb_distal_joint" joint2="right/thumb_proximal_pitch_joint" polycoef="0 0.667 0 0 0"/>
+    <!-- Left other finger mimic joints -->
+    <joint joint1="left/index_intermediate_joint" joint2="left/index_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="left/middle_intermediate_joint" joint2="left/middle_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="left/ring_intermediate_joint" joint2="left/ring_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="left/pinky_intermediate_joint" joint2="left/pinky_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <!-- Right other finger mimic joints -->
+    <joint joint1="right/index_intermediate_joint" joint2="right/index_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="right/middle_intermediate_joint" joint2="right/middle_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="right/ring_intermediate_joint" joint2="right/ring_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+    <joint joint1="right/pinky_intermediate_joint" joint2="right/pinky_proximal_joint" polycoef="-0.04545 1.06399 0 0 0"/>
+  </equality>
+
+  <keyframe>
+    <key name="home" qpos="
+      0 -0.522 -1.81 0.0099 0.782 0  0 0 0 0 0 0 0 0 0 0 0 0
+      0 -0.522 -1.81 0.0099 0.782 0  0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+
+</mujoco>

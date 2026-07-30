@@ -18,6 +18,7 @@
 | `teleop_real.py --robot rm65` | Realman RM65 | 实物 | RM API2 控制 6 轴机械臂 |
 | `teleop_real.py --robot rm65_gripper` | Realman RM65 + EG2-4C2 | 实物 | RM API2 控制机械臂，右手捏合控制二指夹爪 |
 | `teleop_sim.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 仿真 | MuJoCo 仿真，右手控制手臂 + Inspire 灵巧手重定向 |
+| `teleop_sim.py --robot rm65_inspire_dual` | 双 RM65 + 双 Inspire Hand | 仿真 | 左右手分别控制两套 RM65 与 Inspire 灵巧手 |
 | `teleop_real.py --robot rm65_inspire` | Realman RM65 + Inspire Hand | 实物 | RM API2 控制机械臂 + 串口控制 Inspire 灵巧手 |
 | `teleop_sim.py --robot dexforce` | DexForce 双臂 + 双手 | 仿真 | MuJoCo XML 场景，左右手控制双臂；手部配置可先留空 |
 | `teleop_sim.py --robot aloha` | Aloha 双臂 | 仿真 | 左右手分别控制两个臂 |
@@ -42,7 +43,7 @@
 
 ### PC 端
 
-- Python 3.12+（`pyproject.toml` 当前要求 `>=3.12`），conda 环境 `teleop`（`conda activate teleop`）
+- Python 3.12+（`pyproject.toml` 当前要求 `>=3.12`），conda 环境 `vr_teleop`（`conda activate vr_teleop`）
 - MuJoCo (`pip install mujoco`)
 
 ### 第三方仓库（位于 `third_party/`）
@@ -53,12 +54,12 @@
 | `Kinova-kortex2_Gen3_G3L` | Kinova Gen3 Kortex SDK Python 示例 | 需单独放到 `third_party/Kinova-kortex2_Gen3_G3L/` |
 | `mujoco_menagerie` | MuJoCo 机器人模型（Piper, Kinova, Aloha 等） | `git@github.com:wengmister/mujoco_menagerie.git` (git submodule) |
 | `RM_API2` | Realman RM65 Python SDK | 置于 `third_party/RM_API2/` |
-| `rm_models` | Realman RM65 / Inspire MuJoCo 与模型资源 | 置于 `third_party/rm_models/` |
+| `rm_models` | Realman RM65 / Inspire MuJoCo 与模型资源 | `https://github.com/RealManRobot/rm_models.git` (git submodule) |
 
 建议先初始化 submodule：
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init third_party/mujoco_menagerie third_party/AnyDexRetarget third_party/rm_models
 ```
 
 ### 额外依赖（按功能）
@@ -104,6 +105,12 @@ python example/teleop_sim.py --robot rm65_inspire --port 9000
 # RM65 + Inspire Hand（实物）
 python example/teleop_real.py --robot rm65_inspire --rm65-ip 192.168.1.18 --inspire-port /dev/ttyUSB0 --port 9000
 
+# 双 RM65 + 双 Inspire Hand（仿真）
+python example/teleop_sim.py --robot rm65_inspire_dual --port 9000
+
+# DexForce 双臂 + 双手（仿真）
+python example/teleop_sim.py --robot dexforce --port 9000
+
 # Aloha 双臂（仿真）
 python example/teleop_sim.py --robot aloha --port 9000
 ```
@@ -137,6 +144,12 @@ python example/teleop_sim.py --robot rm65_inspire --input-source avp --avp-ip 19
 # RM65 + Inspire Hand（实物）
 python example/teleop_real.py --robot rm65_inspire --input-source avp --avp-ip 192.168.5.32 --rm65-ip 192.168.1.18 --inspire-port /dev/ttyUSB0
 
+# 双 RM65 + 双 Inspire Hand（仿真）
+python example/teleop_sim.py --robot rm65_inspire_dual --input-source avp --avp-ip 192.168.5.32
+
+# DexForce 双臂 + 双手（仿真）
+python example/teleop_sim.py --robot dexforce --input-source avp --avp-ip 192.168.5.32
+
 # Aloha 双臂（仿真）
 python example/teleop_sim.py --robot aloha --input-source avp --avp-ip 192.168.5.32
 ```
@@ -157,6 +170,9 @@ python example/teleop_sim.py --robot kinova_wuji --input-source pico4 --hand-con
 
 # RM65 + Inspire Hand（仿真）
 python example/teleop_sim.py --robot rm65_inspire --input-source pico4
+
+# 双 RM65 + 双 Inspire Hand（仿真）
+python example/teleop_sim.py --robot rm65_inspire_dual --input-source pico4
 
 # DexForce 双臂 + 双手（仿真）
 python example/teleop_sim.py --robot dexforce --input-source pico4
@@ -198,7 +214,7 @@ python example/teleop_sim.py --robot kinova_gripper --input-source pico4 --pico4
 仿真专用:
 - `--scene path/to/scene.xml` — 覆盖默认场景
 - `--site site_name` — 覆盖末端执行器 site 名称
-- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件（`kinova_wuji` / `rm65_inspire` / `dexforce` 可选）
+- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件（`kinova_wuji` / `rm65_inspire` / `rm65_inspire_dual` / `dexforce` 可选）
 - `--hand-side left|right` — 手部侧向（灵巧手重定向场景，默认 `right`）
 
 实物专用:
@@ -295,7 +311,7 @@ vr_teleop/
 - **配置驱动**：`ROBOT_CONFIGS` 字典定义每种机器人的 scene_xml、site_name、home_qpos、hand_type、position_scale 等，`--robot` 参数切换。`example/teleop_sim.py` 与 `teleop_real.py` 各维护一份。
 - **输入源抽象**：三个 input adapter 统一暴露 `get_wrist_pose(side)` / `get_landmarks_mediapipe(side)` / `get_pinch_distance(side)` 接口，主循环按 `avp / pico4 / quest3` 三分支调度。AVP/Pico4 内部已完成坐标变换，Quest3 走 `transform_vr_to_robot_pose`。
 - **Sim/Real 双入口**：
-  - `teleop_sim.py` — `viewer.launch_passive` 可视化，三种执行路径：`_run_single_arm` / `_run_bimanual`(Aloha) / `_run_dexforce_bimanual`(含躯干颈部头追)
+  - `teleop_sim.py` — `viewer.launch_passive` 可视化，四种执行路径：`_run_single_arm` / `_run_bimanual`(Aloha) / `_run_rm65_inspire_dual` / `_run_dexforce_bimanual`(含躯干颈部头追)
   - `teleop_real.py` — `_run_arm_teleop`(Kinova) / `_run_rm65_teleop` / `_run_hand_only`，每个机器人独立 SDK 连接、归位、控制周期
 - **SDK 隔离**：Kortex SDK 与 RM_API2 通过 `sys.path.insert` + 函数内 lazy import，避免互相初始化冲突。
 - **WristTracker 共享**：仿真与实物共用同一残差跟踪器，首帧锁定初始位姿，后续残差经 EMA 平滑后乘 `position_scale` 累加到目标位姿。实物路径额外加笛卡尔平滑层（`cmd_pos += (target-cmd_pos)*gain` + SLERP）。

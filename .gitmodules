@@ -4,3 +4,7 @@
 [submodule "third_party/AnyDexRetarget"]
 	path = third_party/AnyDexRetarget
 	url = https://gitee.com/gx_robot/AnyDexRetarget.git
+
+[submodule "third_party/rm_models"]
+	path = third_party/rm_models
+	url = https://github.com/RealManRobot/rm_models.git

@@ -10,10 +10,13 @@ from mujoco import viewer
 
 _SCENE_ALIASES = {
     "piper": "example/scene/scene_piper.xml",
+    "kinova_gripper": "example/scene/scene_kinova_gen3.xml",
+    "kinova_wuji": "example/scene/scene_kinova_gen3_wuji.xml",
+    "rm65": "example/scene/scene_rm65.xml",
+    "rm65_inspire": "example/scene/scene_rm65_inspire.xml",
+    "rm65_inspire_dual": "example/scene/scene_rm65_inspire_dual.xml",
     "dexforce": "example/scene/scene_dexforce.xml",
     "aloha": "example/scene/aloha/scene.xml",
-    "kinova": "example/scene/scene_kinova_gen3.xml",
-    "rm65": "example/scene/scene_rm65.xml",
 }
 
 

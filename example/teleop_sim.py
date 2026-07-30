@@ -5,6 +5,8 @@ Supports multiple robot configurations via --robot:
   kinova_gripper Kinova Gen3 + Robotiq 2F-85 gripper
   kinova_wuji    Kinova Gen3 + Wuji dexterous hand (20 DOF)
   rm65           Realman RM65 6-DOF arm (no end-effector)
+  rm65_inspire   Realman RM65 + Inspire dexterous hand
+  rm65_inspire_dual Dual RM65 + dual Inspire hands (bimanual)
   dexforce       DexForce dual-arm + dual-hand humanoid (bimanual)
   aloha          Aloha bimanual (dual 6-DOF arms + grippers)
 
@@ -17,6 +19,7 @@ Examples:
     python example/teleop_sim.py --robot kinova_gripper
     python example/teleop_sim.py --robot kinova_gripper --input-source avp --avp-ip 192.168.1.100
     python example/teleop_sim.py --robot kinova_wuji --hand-config path/to/config.yaml
+    python example/teleop_sim.py --robot rm65_inspire_dual --input-source pico4
     python example/teleop_sim.py --robot dexforce --input-source pico4
     python example/teleop_sim.py --robot aloha --position-scale 3.0
 """
@@ -181,6 +184,23 @@ ROBOT_CONFIGS = {
         "num_hand_actuators": 12,
         "hand_qpos_mapping": [8, 9, 10, 11, 0, 1, 2, 3, 6, 7, 4, 5],
         "bimanual": False,
+    },
+    "rm65_inspire_dual": {
+        "scene_xml": str(_SCENE_DIR / "scene_rm65_inspire_dual.xml"),
+        "site_name_template": "{side}/rm65_ee_site",
+        "base_body_template": "{side}/base_link",
+        "home_qpos_per_arm": np.array(
+            [0.0, -0.522, -1.81, 0.0099, 0.782, 0.0],
+            dtype=np.float64,
+        ),
+        "position_scale": 1.5,
+        "hand_type": "inspire",
+        "negate_rot_xy": True,
+        "num_arm_actuators_per_side": 6,
+        "num_hand_actuators_per_side": 12,
+        "hand_qpos_mapping": [8, 9, 10, 11, 0, 1, 2, 3, 6, 7, 4, 5],
+        "bimanual": True,
+        "dual_kind": "rm65_inspire",
     },
     "dexforce": {
         "scene_xml": str(_DEXFORCE_SCENE),
@@ -1172,6 +1192,300 @@ def _run_dexforce_bimanual(config: dict, args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# RM65 + Inspire bimanual controller and simulation loop
+# ---------------------------------------------------------------------------
+
+
+_INSPIRE_FINGER_ACTUATORS = (
+    "thumb_proximal_yaw",
+    "thumb_proximal_pitch",
+    "thumb_intermediate",
+    "thumb_distal",
+    "index_proximal",
+    "index_intermediate",
+    "middle_proximal",
+    "middle_intermediate",
+    "ring_proximal",
+    "ring_intermediate",
+    "pinky_proximal",
+    "pinky_intermediate",
+)
+
+
+class SimRM65InspireArm:
+    """Per-arm controller for bimanual RM65 + Inspire teleop (sim only)."""
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        ik_data: mujoco.MjData,
+        side: str,
+        config: dict,
+        args: argparse.Namespace,
+    ):
+        self.model = model
+        self.data = data
+        self.ik_data = ik_data
+        self.side = side
+        self.config = config
+        self.args = args
+
+        site_name = config["site_name_template"].format(side=side)
+        self.site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+        if self.site_id == -1:
+            raise ValueError(f"Site '{site_name}' not found in model.")
+
+        base_name = config["base_body_template"].format(side=side)
+        self.base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, base_name)
+        base_xmat = None
+        if self.base_body_id != -1:
+            base_xmat = data.xmat[self.base_body_id].reshape(3, 3).copy()
+
+        num_arm = config["num_arm_actuators_per_side"]
+        self.arm_joint_ids: list[int] = []
+        arm_qadrs: list[int] = []
+        self.arm_actuator_indices: list[int] = []
+        for i in range(1, num_arm + 1):
+            jname = f"{side}/joint_{i}"
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, jname)
+            if jid == -1:
+                raise ValueError(f"Joint '{jname}' not found in model.")
+            aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, jname)
+            if aid == -1:
+                raise ValueError(f"Actuator '{jname}' not found in model.")
+            self.arm_joint_ids.append(jid)
+            arm_qadrs.append(model.jnt_qposadr[jid])
+            self.arm_actuator_indices.append(aid)
+        self.arm_dof_indices = np.array(arm_qadrs, dtype=int)
+
+        self.hand_actuator_indices: list[int] = []
+        for fname in _INSPIRE_FINGER_ACTUATORS:
+            aname = f"{side}/{fname}"
+            aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, aname)
+            if aid == -1:
+                raise ValueError(f"Actuator '{aname}' not found in model.")
+            self.hand_actuator_indices.append(aid)
+
+        initial_site_pos = data.site_xpos[self.site_id].copy()
+        initial_site_quat = matrix_to_quaternion(
+            data.site_xmat[self.site_id].reshape(3, 3).copy()
+        )
+        self.tracker = WristTracker(
+            initial_site_pos,
+            initial_site_quat,
+            position_scale=args.position_scale,
+            ema_alpha=args.ema_alpha,
+            negate_rot_xy=(
+                config.get("negate_rot_xy", False)
+                if args.input_source != "avp"
+                else False
+            ),
+            base_xmat=base_xmat,
+        )
+
+        inspire_cfg = _resolve_hand_config(args, "inspire", side=side)
+        self.retargeter = HandRetargeter(inspire_cfg, side)
+
+        self.arm_home_qpos = np.asarray(
+            config["home_qpos_per_arm"], dtype=np.float64
+        ).copy()
+        self.q_sol = data.qpos[: model.nq].copy()
+        self.latest_hand_qpos: np.ndarray | None = None
+
+    # -- AVP path -----------------------------------------------------------
+
+    def update_avp(self, avp_input) -> None:
+        if self.retargeter.available:
+            mp = avp_input.get_landmarks_mediapipe(self.side)
+            if mp is not None:
+                result = self.retargeter.retarget_mediapipe(mp)
+                if result is not None:
+                    self.latest_hand_qpos = result
+
+        wrist = avp_input.get_wrist_pose(self.side)
+        if wrist is not None:
+            robot_position, robot_quaternion = wrist
+            self.tracker.update(robot_position, robot_quaternion)
+
+    # -- Pico4 path ---------------------------------------------------------
+
+    def update_pico4(self, pico4_input) -> None:
+        if self.retargeter.available:
+            mp = pico4_input.get_landmarks_mediapipe(self.side)
+            if mp is not None:
+                result = self.retargeter.retarget_mediapipe(mp)
+                if result is not None:
+                    self.latest_hand_qpos = result
+
+        wrist = pico4_input.get_wrist_pose(self.side)
+        if wrist is not None:
+            robot_position, robot_quaternion = wrist
+            self.tracker.update(robot_position, robot_quaternion)
+
+    # -- Quest3 path --------------------------------------------------------
+
+    def update_quest3(self, message: str) -> None:
+        if self.side == "right":
+            wrist_pose = parse_right_wrist_pose(message)
+            landmarks = parse_right_landmarks(message)
+        else:
+            wrist_pose = parse_left_wrist_pose(message)
+            landmarks = parse_left_landmarks(message)
+
+        if self.retargeter.available and landmarks is not None:
+            result = self.retargeter.retarget(landmarks)
+            if result is not None:
+                self.latest_hand_qpos = result
+
+        if wrist_pose is not None:
+            wrist_position = (wrist_pose[0], wrist_pose[1], wrist_pose[2])
+            wrist_quaternion = (
+                wrist_pose[3],
+                wrist_pose[4],
+                wrist_pose[5],
+                wrist_pose[6],
+            )
+            robot_position, robot_quaternion = transform_vr_to_robot_pose(
+                wrist_position, wrist_quaternion
+            )
+            self.tracker.update(robot_position, robot_quaternion)
+
+    # -- IK & control -------------------------------------------------------
+
+    def step_ik(self) -> None:
+        if not self.tracker.initialized:
+            return
+        q_new = solve_pose_ik(
+            self.model,
+            self.ik_data,
+            self.site_id,
+            self.tracker.target_position,
+            self.tracker.target_quaternion,
+            self.data.qpos[: self.model.nq],
+            rot_weight=self.args.rot_weight,
+            damping=self.args.ik_damping,
+            current_q_weight=self.args.ik_current_weight,
+            dof_indices=self.arm_dof_indices,
+            home_qpos=self.arm_home_qpos,
+        )
+        delta_deg = np.rad2deg(
+            q_new[self.arm_dof_indices] - self.q_sol[self.arm_dof_indices]
+        )
+        if np.max(np.abs(delta_deg)) < 30.0:
+            self.q_sol = q_new
+
+    def apply_control(self) -> None:
+        if not self.tracker.initialized:
+            return
+        for act_id, qadr in zip(self.arm_actuator_indices, self.arm_dof_indices):
+            self.data.ctrl[act_id] = self.q_sol[qadr]
+        if self.latest_hand_qpos is not None:
+            mapping = self.config.get("hand_qpos_mapping")
+            mapped = (
+                self.latest_hand_qpos[mapping] if mapping else self.latest_hand_qpos
+            )
+            for i, act_id in enumerate(self.hand_actuator_indices):
+                self.data.ctrl[act_id] = mapped[i]
+
+
+def _run_rm65_inspire_dual(config: dict, args: argparse.Namespace) -> None:
+    xml_path = Path(args.scene).expanduser().resolve()
+    print(f"Loading scene from: {xml_path}")
+    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    data = mujoco.MjData(model)
+    ik_data = mujoco.MjData(model)
+
+    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    if key_id != -1:
+        mujoco.mj_resetDataKeyframe(model, data, key_id)
+    mujoco.mj_forward(model, data)
+
+    left_arm = SimRM65InspireArm(model, data, ik_data, "left", config, args)
+    right_arm = SimRM65InspireArm(model, data, ik_data, "right", config, args)
+
+    for arm in (left_arm, right_arm):
+        for act_id, qadr in zip(arm.arm_actuator_indices, arm.arm_dof_indices):
+            data.ctrl[act_id] = data.qpos[qadr]
+
+    sock = None
+    avp_input = None
+    pico4_input = None
+    if args.input_source == "avp":
+        from util.avp_input import AVPInput
+
+        avp_input = AVPInput(ip=args.avp_ip)
+        print(f"  Input: Apple Vision Pro ({args.avp_ip})")
+    elif args.input_source == "pico4":
+        from util.pico4_input import Pico4
+
+        pico4_input = Pico4(
+            mode=args.pico4_mode,
+            relay_host=args.pico4_relay_host,
+            relay_port=args.pico4_relay_port,
+            port=args.pico4_port,
+            broadcast_port=args.pico4_broadcast_port,
+        )
+        print(f"  Input: Pico 4 ({args.pico4_mode})")
+    else:
+        sock = make_socket(args.port)
+        print(f"  Input: Quest 3 (UDP port {args.port})")
+
+    last_log_time = time.time()
+
+    with viewer.launch_passive(model, data) as vis:
+        vis.cam.azimuth = model.vis.global_.azimuth
+        vis.cam.elevation = model.vis.global_.elevation
+        vis.cam.distance = model.stat.extent * 1.5
+        vis.cam.lookat[:] = model.stat.center
+
+        while vis.is_running():
+            loop_start = time.time()
+
+            if avp_input is not None:
+                if avp_input.poll():
+                    if avp_input.check_dual_fist_stop():
+                        print("Dual fist stop triggered — exiting.")
+                        break
+                    left_arm.update_avp(avp_input)
+                    right_arm.update_avp(avp_input)
+            elif pico4_input is not None:
+                left_arm.update_pico4(pico4_input)
+                right_arm.update_pico4(pico4_input)
+            else:
+                packet = recv_latest_packet(sock)
+                if packet is not None:
+                    message = packet.decode("utf-8", errors="ignore")
+                    left_arm.update_quest3(message)
+                    right_arm.update_quest3(message)
+
+            now = time.time()
+            if now - last_log_time > 1.0:
+                print(
+                    f"L resid: {left_arm.tracker.residual} "
+                    f"R resid: {right_arm.tracker.residual}"
+                )
+                last_log_time = now
+
+            left_arm.step_ik()
+            right_arm.step_ik()
+            left_arm.apply_control()
+            right_arm.apply_control()
+
+            mujoco.mj_step(model, data)
+            vis.sync()
+
+            sleep_time = model.opt.timestep - (time.time() - loop_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    if sock is not None:
+        sock.close()
+    if pico4_input is not None:
+        pico4_input.stop()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1290,6 +1604,8 @@ def main() -> None:
 
     if config.get("dexforce", False):
         _run_dexforce_bimanual(config, args)
+    elif config.get("dual_kind") == "rm65_inspire":
+        _run_rm65_inspire_dual(config, args)
     elif config.get("bimanual", False):
         _run_bimanual(config, args)
     else:
