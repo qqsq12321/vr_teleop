@@ -28,6 +28,7 @@ import socket
 import struct
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -307,6 +308,26 @@ def _build_broadcast_packet(ip: str) -> bytes:
 
 def _get_local_ips() -> list[str]:
     ips = []
+    try:
+        import fcntl
+
+        for _index, name in socket.if_nameindex():
+            if name == 'lo' or not Path(f'/sys/class/net/{name}/device').exists():
+                continue
+            request = struct.pack('256s', name[:15].encode('utf-8'))
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as iface_sock:
+                try:
+                    flags = struct.unpack(
+                        'H', fcntl.ioctl(iface_sock.fileno(), 0x8913, request)[16:18]
+                    )[0]
+                    if not flags & 0x1:
+                        continue
+                    response = fcntl.ioctl(iface_sock.fileno(), 0x8915, request)
+                except OSError:
+                    continue
+            ips.append(socket.inet_ntoa(response[20:24]))
+    except (ImportError, OSError):
+        pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None):
             if info[0] == socket.AF_INET:

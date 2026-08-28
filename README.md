@@ -54,11 +54,22 @@ git submodule update --init --recursive
 
 ## 运行命令
 
-### Quest 3 输入（默认）
+### Pico 4 输入（本文档默认）
+
+本文档优先介绍 Pico 4；程序仍保留原始 CLI 默认值 `quest3`，因此使用 Pico 4 时需要显式指定输入源。
 
 ```bash
 # DexForce 双臂 + 双手（仿真）
-python example/teleop_sim.py --port 9000
+python example/teleop_sim.py --input-source pico4 --pico4-mode direct
+```
+
+默认由 PC 监听 TCP `63901`，并通过 UDP `29888` 广播 USB/Wi-Fi 地址。
+
+### Quest 3 输入
+
+```bash
+# DexForce 双臂 + 双手（仿真）
+python example/teleop_sim.py --input-source quest3 --port 9000
 
 # DexForce 双臂 + 双手（实物骨架）
 python example/teleop_real.py --dexforce-ip 192.168.1.50 --port 9000
@@ -76,23 +87,27 @@ python example/teleop_sim.py --input-source avp --avp-ip 192.168.5.32
 python example/teleop_real.py --input-source avp --avp-ip 192.168.5.32 --dexforce-ip 192.168.1.50
 ```
 
-### Pico 4 输入
+### Pico 4 relay 模式
 
-relay 模式默认连接 `127.0.0.1:63902`：
+项目提供独立的 `example/pico4_daemon.py`。它负责保持 PICO 连接，并将数据转发到 `127.0.0.1:63902`，因此启动或重启仿真时无需让 PICO 重新连接。
+
+终端 1：
+
+```bash
+python example/pico4_daemon.py
+```
+
+终端 2：
 
 ```bash
 # DexForce 双臂 + 双手（仿真）
-python example/teleop_sim.py --input-source pico4
+python example/teleop_sim.py --input-source pico4 --pico4-mode relay
 
 # DexForce 双臂 + 双手（实物骨架）
 python example/teleop_real.py --input-source pico4 --dexforce-ip 192.168.1.50
 ```
 
-direct 模式：
-
-```bash
-python example/teleop_sim.py --input-source pico4 --pico4-mode direct --pico4-port 63901
-```
+停止 daemon：在终端 1 按 `Ctrl+C`。
 
 停止方式说明：
 
@@ -102,9 +117,9 @@ python example/teleop_sim.py --input-source pico4 --pico4-mode direct --pico4-po
 ## 可选参数
 
 输入源:
-- `--input-source quest3|avp|pico4` — 输入设备（默认 quest3）
+- `--input-source quest3|avp|pico4` — 输入设备（CLI 默认 quest3；本文档默认介绍 pico4）
 - `--avp-ip <IP>` — Apple Vision Pro IP 地址（仅 avp 模式）
-- `--pico4-mode relay|direct` — Pico 4 输入模式（默认 relay）
+- `--pico4-mode relay|direct` — Pico 4 输入模式（CLI 默认 relay；本文档推荐 direct）
 - `--pico4-relay-host 127.0.0.1` — Pico 4 relay 主机
 - `--pico4-relay-port 63902` — Pico 4 relay 端口
 - `--pico4-port 63901` — Pico 4 direct 模式 TCP 端口
