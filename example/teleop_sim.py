@@ -8,6 +8,7 @@ Input sources (--input-source):
 Examples:
     python example/teleop_sim.py --port 9000
     python example/teleop_sim.py --robot galbot --hand inspire --port 9000
+    python example/teleop_sim.py --robot realman_rm75b --input-source pico4
     python example/teleop_sim.py --input-source avp --avp-ip 192.168.1.100
     python example/teleop_sim.py --input-source pico4
 """
@@ -35,6 +36,7 @@ from utils.core.quaternion import (
 )
 from utils.robots.dexforce import DexForceSpec
 from utils.robots.galbot import GalbotInspireSpec
+from utils.robots.realman_rm75b import RealManRM75BInspireSpec
 
 # ---------------------------------------------------------------------------
 # Scene / config paths
@@ -42,11 +44,13 @@ from utils.robots.galbot import GalbotInspireSpec
 
 _DEXFORCE_SPEC = DexForceSpec()
 _GALBOT_SPEC = GalbotInspireSpec()
+_REALMAN_RM75B_SPEC = RealManRM75BInspireSpec()
 
 
 _DEFAULT_HANDS = {
     "dexforce": "linker_l20",
     "galbot": "inspire",
+    "realman_rm75b": "inspire",
 }
 _HAND_ALIASES = {
     "inspire": "inspire",
@@ -57,6 +61,7 @@ _HAND_ALIASES = {
 _ROBOT_HAND_SPECS = {
     ("dexforce", "linker_l20"): _DEXFORCE_SPEC,
     ("galbot", "inspire"): _GALBOT_SPEC,
+    ("realman_rm75b", "inspire"): _REALMAN_RM75B_SPEC,
 }
 
 
@@ -355,7 +360,7 @@ def main() -> None:
         "--robot",
         default="dexforce",
         choices=sorted(_DEFAULT_HANDS),
-        help="Robot body to teleoperate: dexforce (default) or galbot.",
+        help="Robot body to teleoperate: dexforce (default), galbot, or realman_rm75b.",
     )
     parser.add_argument(
         "--hand",
@@ -363,7 +368,7 @@ def main() -> None:
         choices=sorted(_HAND_ALIASES),
         help=(
             "Dexterous hand/end-effector: defaults to linker_l20 for dexforce "
-            "and inspire for galbot."
+            "and inspire for galbot/realman_rm75b."
         ),
     )
     parser.add_argument(

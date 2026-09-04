@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<robot name="joint" xmlns:xacro="http://www.ros.org/wiki/xacro">
+ <!--  RM75-B左臂和身体的连接joint  -->  
+  <joint name="l_body_arm_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="l_base_link1" />
+    <child link="l_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+ <!--  RM75-B右臂和身体的连接joint  -->  
+  <joint name="r_body_arm_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="r_base_link1" />
+    <child link="r_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+ <!-- 底盘和主体连接joint -->  
+  <joint name="dipan_zhuti_joint" type="fixed">
+    <origin xyz="0 0 0.18" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="body_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+ <!-- 左臂末端和左手灵巧手的连接joint -->
+  <joint name="l_arm_hand_joint" type="fixed">
+    <origin xyz="0 0 0.03" rpy="0 0 0" />
+    <parent link="l_link7" />
+    <child link="l_hand_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <!-- 右臂末端和右手灵巧手的连接joint -->
+  <joint name="r_arm_hand_joint" type="fixed">
+    <origin xyz="0 0 0.03" rpy="0 0 0" />
+    <parent link="r_link7" />
+    <child link="r_hand_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+</robot>  

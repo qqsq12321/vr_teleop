@@ -1,0 +1,256 @@
+<?xml version="1.0"?>
+<robot name="agv" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Define constants -->
+  <xacro:property name="mesh_path" value="package://dual_75B_arm_robot/meshes/" />
+  <!-- Macro for visual and collision elements -->
+  <xacro:macro name="visual_collision" params="mesh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+    </collision>
+  </xacro:macro>
+  <!-- base_link -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.00022588 -0.029317 0.067118" rpy="0 0 0" />
+      <mass value="3.652" />
+      <inertia
+        ixx="0.040658" ixy="-4.1019E-05" ixz="0.00010805"
+        iyy="0.085621" iyz="-0.00031013" izz="0.10712" />
+    </inertial>
+    <xacro:visual_collision mesh="base_link.STL" />
+  </link>
+
+  <!-- r_wheel_link -->
+  <link name="r_wheel_link">
+    <inertial>
+      <origin xyz="0.33262 3.4018E-06 3.7026E-06" rpy="0 0 0" />
+      <mass value="1.1012" />
+      <inertia
+        ixx="0.003396" ixy="2.2501E-07" ixz="2.3628E-07"
+        iyy="0.001988" iyz="1.5358E-08" izz="0.001988" />
+    </inertial>
+    <xacro:visual_collision mesh="r_wheel_link.STL" />
+  </link>
+
+  <!-- l_wheel_link -->
+  <link name="l_wheel_link">
+    <inertial>
+      <origin xyz="-0.33262 9.1102E-08 5.0272E-06" rpy="0 0 0" />
+      <mass value="1.1012" />
+      <inertia
+        ixx="0.003396" ixy="-7.5162E-11" ixz="-3.2628E-07"
+        iyy="0.001988" iyz="-2.7335E-15" izz="0.001988" />
+    </inertial>
+    <xacro:visual_collision mesh="l_wheel_link.STL" />
+  </link>
+
+  <!-- zuixiao_link1 -->
+  <link name="min_wheel_link1">
+    <inertial>
+      <origin xyz="-0.0065 4.231E-08 -2.8631E-08" rpy="0 0 0" />
+      <mass value="0.0059492" />
+      <inertia
+        ixx="4.5784E-07" ixy="-2.2073E-13" ixz="3.9671E-13"
+        iyy="3.0694E-07" iyz="-1.2059E-12" izz="3.0694E-07" />
+    </inertial>
+    <xacro:visual_collision mesh="min_wheel_link1.STL" />
+  </link>
+
+  <!-- zuixiao_link2 -->
+  <link name="medium_wheel_link2">
+    <inertial>
+      <origin xyz="-0.015 9.7145E-17 -2.7756E-17" rpy="0 0 0" />
+      <mass value="0.055849" />
+      <inertia
+        ixx="1.7473E-05" ixy="7.0072E-12" ixz="-1.4822E-11"
+        iyy="1.2735E-05" iyz="-1.8244E-10" izz="1.2735E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="medium_wheel_link2.STL" />
+  </link>
+
+  <!-- wanxianglun_link1_1 -->
+  <link name="swivel_wheel_link1_1">
+    <inertial>
+      <origin xyz="6.9718E-08 -0.0021717 -0.012703" rpy="0 0 0" />
+      <mass value="0.033248" />
+      <inertia
+        ixx="1.1034E-05" ixy="-2.1793E-11" ixz="-4.5884E-11"
+        iyy="1.084E-05" iyz="-1.5008E-06" izz="3.8134E-06" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link1_1.STL" />
+  </link>
+
+  <!-- wanxianglun_link1_2 -->
+  <link name="swivel_wheel_link1_2">
+      <inertial>
+         <origin xyz="-0.02625 -2.8487E-07 -4.6142E-07" rpy="0 0 0" />
+         <mass value="0.17673" />
+         <inertia
+           ixx="0.00010419" ixy="-2.299E-10" ixz="-2.8569E-10"
+           iyy="9.7392E-05" iyz="1.9391E-09" izz="9.7391E-05" />
+      </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link1_2.STL" />
+  </link>
+
+  <!-- wanxianglun_link2_1 -->
+  <link name="swivel_wheel_link2_1">
+    <inertial>
+      <origin xyz="-6.9718E-08 0.0021717 0.034797" rpy="0 0 0" />
+      <mass value="0.033248" />
+      <inertia
+        ixx="1.1034E-05" ixy="-2.1793E-11" ixz="4.5884E-11"
+        iyy="1.084E-05" iyz="1.5008E-06" izz="3.8134E-06" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link2_1.STL" />
+  </link>
+  <!-- wanxianglun_link2_2 -->
+  <link name="swivel_wheel_link2_2">
+    <inertial>
+      <origin xyz="0.02525 -2.9363E-07 -4.5797E-07" rpy="0 0 0" />
+      <mass value="0.17673" />
+      <inertia ixx="0.00010419" ixy="-2.3586E-10" ixz="-2.8348E-10"
+        iyy="9.7392E-05" iyz="1.9157E-09" izz="9.7391E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link2_2.STL" />
+  </link>
+  <!-- wanxianglun_link3_1 -->
+  <link name="swivel_wheel_link3_1">
+    <inertial>
+      <origin xyz="6.9718E-08 -0.0021717 0.034797" rpy="0 0 0" />
+      <mass value="0.033248" />
+      <inertia ixx="1.1034E-05" ixy="-2.1793E-11" ixz="-4.5884E-11"
+      iyy="1.084E-05" iyz="-1.5008E-06" izz="3.8134E-06" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link3_1.STL" />
+  </link>
+   <!-- wanxianglun_link3_2-->
+   <link name="swivel_wheel_link3_2">
+    <inertial>
+      <origin xyz="-0.02525 -2.8487E-07 -4.6142E-07" rpy="0 0 0" />
+      <mass value="0.17673" />
+      <inertia ixx="0.00010419" ixy="-2.299E-10" ixz="-2.8569E-10"
+        iyy="9.7392E-05" iyz="1.9391E-09" izz="9.7391E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link3_2.STL" />
+  </link>
+   <!-- wanxianglun_link4_1-->
+   <link name="swivel_wheel_link4_1">
+    <inertial>
+      <origin xyz="-6.9718E-08 0.0021717 0.034797" rpy="0 0 0" />
+      <mass value="0.033248" />
+      <inertia ixx="1.1034E-05" ixy="-2.1793E-11" ixz="4.5884E-11"
+        iyy="1.084E-05" iyz="1.5008E-06" izz="3.8134E-06" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link4_1.STL" />
+  </link>
+   <!-- wanxianglun_link4_2-->
+   <link name="swivel_wheel_link4_2">
+    <inertial>
+      <origin xyz="-0.02525 5.5199E-07 1.8223E-07" rpy="0 0 0" />
+      <mass value="0.17673" />
+      <inertia ixx="0.00010419" ixy="4.0593E-10" ixz="8.0435E-11"
+        iyy="9.7394E-05" iyz="-4.83E-10" izz="9.739E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="swivel_wheel_link4_2.STL" />
+  </link>
+
+  <!-- Joints -->
+  <!-- r_wheel_joint_1 -->
+  <joint name="r_wheel_joint_1" type="continuous">
+    <origin xyz="-0.151 0 -0.0109" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="r_wheel_link" />
+    <axis xyz="1 0 0" />
+    <limit effort="100" velocity="10" />
+  </joint>
+  <!-- l_dalunzi_joint -->
+  <joint name="l_wheel_joint2" type="continuous">
+    <origin xyz="0.151 0 -0.0109" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="l_wheel_link" />
+    <axis xyz="-1 0 0" />
+    <limit effort="100" velocity="10" />
+  </joint>
+  <!-- zuixiao_joint1 -->
+  <joint name="min_wheel_joint" type="continuous">
+    <origin xyz="0.0065 0.218 -0.0745" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="min_wheel_link1" />
+    <axis xyz="-1 0 0" />
+  </joint>
+  <!-- zuixiao_joint2 -->
+  <joint name="medium_wheel_joint2" type="continuous">
+    <origin xyz="0.016 -0.188 -0.061" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="medium_wheel_link2" />
+    <axis xyz="-1 0 0" />
+  </joint>
+  <!-- wanxianglun_joint1_1 -->
+  <joint name="swivel_wheel_joint1_1" type="continuous">
+    <origin xyz="0.093 -0.146 -0.0077" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="swivel_wheel_link1_1" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <!-- wanxianglun_joint1_2 -->
+  <joint name="swivel_wheel_joint_1_2" type="continuous">
+    <origin xyz="0.02625 0.0235 -0.0475" rpy="0 0 0" />
+    <parent link="swivel_wheel_link1_1" />
+    <child link="swivel_wheel_link1_2" />
+    <axis xyz="-1 0 0" />
+  </joint>
+  <!-- wanxianglun_joint2_1 -->
+  <joint name="swivel_wheel_joint2_1" type="continuous">
+    <origin xyz="0.093 0.146 -0.0552" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="swivel_wheel_link2_1" />
+    <axis xyz="0 0 1" />
+  </joint>
+   <!-- wanxianglun_joint2_1 -->
+  <joint name="swivel_wheel_joint2_2" type="continuous">
+    <origin xyz="-0.02525 -0.0235 0" rpy="0 0 0" />
+    <parent link="swivel_wheel_link2_1" />
+    <child link="swivel_wheel_link2_2" />
+    <axis xyz="1 0 0" />
+  </joint>
+   <!-- wanxianglun_joint3_1 -->
+  <joint name="swivel_wheel_joint3_1" type="continuous">
+    <origin xyz="-0.093 -0.146 -0.0552" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="swivel_wheel_link3_1" />
+    <axis xyz="0 0 1" />
+  </joint>
+   <!-- wanxianglun_joint3_2 -->
+   <joint name="swivel_wheel_joint3_2" type="continuous">
+    <origin xyz="0.02525 0.0235 0" rpy="0 0 0" />
+    <parent link="swivel_wheel_link3_1" />
+    <child link="swivel_wheel_link3_2" />
+    <axis xyz="-1 0 0" />
+  </joint>
+   <!-- wanxianglun_joint4_1 -->
+  <joint name="swivel_wheel_joint4_1" type="continuous">
+    <origin xyz="-0.093 0.146 -0.0552" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="swivel_wheel_link4_1" />
+    <axis xyz="0 0 1" />
+  </joint>
+   <!-- wanxianglun_joint4_2 -->
+  <joint name="swivel_wheel_joint4_2" type="continuous">
+    <origin xyz="0.02525 -0.0235 0" rpy="0 0 0" />
+    <parent link="swivel_wheel_link4_1" />
+    <child link="swivel_wheel_link4_2" />
+    <axis xyz="-1 0 0" />
+  </joint>
+</robot>

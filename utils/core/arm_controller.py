@@ -56,7 +56,7 @@ class TeleopArmController:
         arm_joint_names: tuple[str, ...] | None = None,
         hand_joint_names: tuple[str, ...] | None = None,
         ee_body_name: str | None = None,
-        base_body_name: str = "base_link",
+        base_body_name: str | None = "base_link",
         hand_qpos_mapping: tuple[int, ...] | list[int] | np.ndarray | None = None,
         position_deadband: float = 0.0,
         rotation_deadband_deg: float = 0.0,
@@ -130,10 +130,19 @@ class TeleopArmController:
 
         initial_body_pos = data.xpos[self.ee_body_id].copy()
         initial_body_quat = matrix_to_quaternion(data.xmat[self.ee_body_id].reshape(3, 3).copy())
-        base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, base_body_name)
+        # VR adapters already convert wrist translation into the project world frame
+        # (X forward, Y left, Z up). Most existing scenes have their base frame
+        # aligned with that world frame, so applying base_xmat is harmless/useful.
+        # A spec may set base_body_name=None when the imported model is wrapped in
+        # an alignment rotation: applying that rotation again would rotate only the
+        # translation residual while the already-correct quaternion stays unchanged.
         base_xmat = None
-        if base_body_id != -1:
-            base_xmat = data.xmat[base_body_id].reshape(3, 3).copy()
+        if base_body_name is not None:
+            base_body_id = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, base_body_name
+            )
+            if base_body_id != -1:
+                base_xmat = data.xmat[base_body_id].reshape(3, 3).copy()
 
         self.tracker = WristTracker(
             initial_body_pos,

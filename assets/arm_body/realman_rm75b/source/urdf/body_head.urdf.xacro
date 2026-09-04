@@ -1,0 +1,143 @@
+<?xml version="1.0"?>
+<robot name="body_head" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Define constants -->
+  <xacro:property name="mesh_path" value="package://dual_75B_arm_robot/meshes/" />
+  <!-- Macro for visual and collision elements -->
+  <xacro:macro name="visual_collision" params="mesh color">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+      <material name="">
+        <color rgba="${color}" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+    </collision>
+  </xacro:macro>
+  <link name="body_base_link">
+    <inertial>
+      <origin xyz="9.1042E-05 0.0090147 0.4566" rpy="0 0 0" />
+      <mass value="4.7837" />
+      <inertia
+        ixx="0.23517"
+        ixy="-3.192E-05"
+        ixz="-0.00010587"
+        iyy="0.25285"
+        iyz="-0.018085"
+        izz="0.047071" />
+    </inertial>
+    <xacro:visual_collision mesh="body_base_link.STL" color="0.75294 0.75294 0.75294 1" />
+  </link>
+  <link name="head_link1">
+    <inertial>
+      <origin xyz="0.0001875 0.00096505 -0.016651" rpy="0 0 0" />
+      <mass value="0.045769" />
+      <inertia
+        ixx="1.3234E-05"
+        ixy="8.4883E-10"
+        ixz="-7.4126E-08"
+        iyy="1.9277E-05"
+        iyz="9.0908E-07"
+        izz="1.087E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="head_link1.STL" color="0.75294 0.75294 0.75294 1" />
+  </link>
+   <link name="head_link2">
+    <inertial>
+      <origin xyz="0.00049959 0.0049121 0.034146" rpy="0 0 0" />
+      <mass value="0.3269" />
+      <inertia
+        ixx="0.00049217"
+        ixy="1.368E-08"
+        ixz="-4.1034E-08"
+        iyy="0.0020328"
+        iyz="-5.5292E-07"
+        izz="0.0018375" />
+    </inertial>
+    <xacro:visual_collision mesh="head_link2.STL" color="0.75294 0.75294 0.75294 1" />
+  </link>
+  <link name="camera_link">
+    <inertial>
+      <origin xyz="-0.00024784 0.0019815 0.012439" rpy="0 0 0" />
+      <mass value="0.04614" />
+      <inertia
+        ixx="4.0634E-06"
+        ixy="-2.5882E-07"
+        ixz="3.2692E-09"
+        iyy="2.8364E-05"
+        iyz="-1.3826E-09"
+        izz="2.8417E-05" />
+    </inertial>
+    <xacro:visual_collision mesh="camera_link.STL" color="0.50196 0.50196 0.50196 1" />
+  </link>
+  <link name="r_base_link1">
+    <inertial>
+      <origin xyz="-0.00012516 -0.010809 -0.0025" rpy="0 0 0" />
+      <mass value="0.066996" />
+      <inertia
+        ixx="9.1718E-05"
+        ixy="3.885E-07"
+        ixz="1.6194E-21"
+        iyy="7.8373E-05"
+        iyz="-7.0995E-21"
+        izz="0.00016981" />
+    </inertial>
+    <xacro:visual_collision mesh="r_base_link1.STL" color="0.75294 0.75294 0.75294 1" />
+  </link>
+  <link name="l_base_link1">
+    <inertial>
+      <origin xyz="-0.00012516 0.010809 -0.0025" rpy="0 0 0" />
+      <mass value="0.066996" />
+      <inertia
+        ixx="9.1718E-05"
+        ixy="-3.885E-07"
+        ixz="1.4433E-21"
+        iyy="7.8373E-05"
+        iyz="1.2294E-20"
+        izz="0.00016981" />
+    </inertial>
+    <xacro:visual_collision mesh="l_base_link1.STL" color="0.75294 0.75294 0.75294 1" />
+  </link>
+  <joint name="head_joint1" type="revolute">
+    <origin xyz="0 0.0405 0.96325" rpy="0 0 3.1416" />
+    <parent link="body_base_link" />
+    <child link="head_link1" />
+    <axis xyz="0 0 -1" />
+    <limit lower="-1.256" upper="1.256" effort="2" velocity="1.57" />
+  </joint>
+  <joint name="head_joint2" type="revolute">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="head_link1" />
+    <child link="head_link2" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.419" upper="0.419" effort="2" velocity="1.57" />
+  </joint>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.0005 0.06055 0.018" rpy="0 0 0" />
+    <parent link="head_link2" />
+    <child link="camera_link" />
+    <axis xyz="0 0 0" />
+    <limit lower="-0.419" upper="0.419" effort="2" velocity="1.57" />
+  </joint>
+  <joint name="l_base_joint1" type="fixed">
+    <origin xyz="-0.045916 0.068353 0.8505" rpy="0.43633 -1.5708 0" />
+    <parent link="body_base_link" />
+    <child link="r_base_link1" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="r_base_joint1" type="fixed">
+    <origin xyz="0.045832 0.068171 0.8505" rpy="2.7053 -1.5708 0" />
+    <parent link="body_base_link" />
+    <child link="l_base_link1" />
+    <axis xyz="0 0 0" />
+  </joint>
+</robot>
+
+
+

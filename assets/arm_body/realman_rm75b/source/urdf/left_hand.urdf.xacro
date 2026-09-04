@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<robot name="left_hand" xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- Define constants -->
+  <xacro:property name="mesh_path" value="package://dual_75B_arm_robot/meshes/" />
+  <!-- Macro to define a generic link with mass, inertia, and visual -->
+  <xacro:macro name="visual_collision" params="mesh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+      <material name="">
+        <color rgba="0.75294 0.75294 0.75294 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_path}${mesh}" />
+      </geometry>
+    </collision>
+  </xacro:macro>
+  <link name="l_hand_base_link">
+    <inertial>
+      <origin
+        xyz="-0.0071754 0.0035435 0.086503"
+        rpy="0 0 0" />
+      <mass
+        value="0.19121" />
+      <inertia
+        ixx="0.00051318"
+        ixy="4.0981E-05"
+        ixz="-2.4782E-06"
+        iyy="0.00048013"
+        iyz="5.5952E-06"
+        izz="0.00019085" />
+    </inertial>
+    <xacro:visual_collision mesh="l_hand_base_link.STL" />
+  </link>
+</robot>
