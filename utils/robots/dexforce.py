@@ -46,6 +46,8 @@ class DexForceSpec:
         "LF_PIP",
         "LF_DIP",
     )
+    # AnyDex Linker L20 output order is index, middle, pinky, ring, thumb;
+    # reorder it to the DexForce actuator order above.
     hand_qpos_mapping: tuple[int, ...] = (
         16,
         17,
@@ -56,18 +58,18 @@ class DexForceSpec:
         1,
         2,
         3,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15,
         4,
         5,
         6,
         7,
+        12,
+        13,
+        14,
+        15,
+        8,
+        9,
+        10,
+        11,
     )
     torso_joint_names: tuple[str, ...] = ("ANKLE", "KNEE", "BUTTOCK", "WAIST")
     head_joint_names: tuple[str, ...] = ("NECK1", "NECK2")
@@ -92,8 +94,6 @@ class DexForceSpec:
 
     def hand_config_path(self, input_source: str, side: str) -> Path:
         source = input_source if input_source in {"quest3", "avp", "pico4"} else "quest3"
-        if source == "pico4" and side == "left":
-            return ANYDEX_ADAPTIVE_CONFIG_DIR / "pico4" / "pico4_linker_l20_left.yaml"
         return ANYDEX_ADAPTIVE_CONFIG_DIR / source / f"{source}_linker_l20.yaml"
 
     def apply_head_torso(

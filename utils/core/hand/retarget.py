@@ -17,8 +17,6 @@ _ANYDEX_CONFIG_DIR = Path(__file__).resolve().parents[3] / "third_party" / "AnyD
 
 def _anydex_hand_config_path(input_source: str, hand_type: str, side: str = "right") -> Path:
     source = input_source if input_source in {"quest3", "avp", "pico4"} else "quest3"
-    if hand_type == "linker_l20" and source == "pico4" and side == "left":
-        return _ANYDEX_CONFIG_DIR / "pico4" / "pico4_linker_l20_left.yaml"
     return _ANYDEX_CONFIG_DIR / source / f"{source}_{hand_type}.yaml"
 
 
