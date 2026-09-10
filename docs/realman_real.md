@@ -4,16 +4,52 @@
 
 ```bash
 conda activate vr_teleop
-python example/teleop_real.py --enable-hands
+
+# 手柄遥操 + 两指夹爪（推荐）
+python example/teleop_real.py --controller --ee gripper
+
+# 手柄遥操，只控制双臂
+python example/teleop_real.py --controller
+
+# 手势追踪遥操（Pico 手部追踪，非手柄）
+python example/teleop_real.py
 ```
 
-**连接真机，无交互确认；默认双臂，上述命令同时启用双手。** 只控制双臂则去掉
-`--enable-hands`。原命令 `python example/teleop_real.py --arm both --enable-hands` 仍有效；
-`--arm left|right` 保留为可选单臂控制。
+**连接真机，无交互确认；默认双臂。** `--arm left|right` 保留为可选单臂控制。
 **程序先让选中的机械臂运动到 RM75 预设初始姿态，不等待 Pico 追踪。** 默认先左臂、再右臂，
 每侧均等待 SDK 的阻塞运动完成；两侧完成后重新读取实测角，首帧腕姿以这个到位后姿态为基准。
 启动期间不接入 Pico 控制、不下发手指目标。不自动上电、清故障、编码器校零或设置固定手型；
 不控制头、底盘和升降。
+
+### 手柄模式（`--controller`）
+
+左右手柄分别控制同侧机械臂，输入取自 Pico 上报 JSON 的 `Controller.left/right`：
+
+| 按键 | 字段 | 功能 |
+|------|------|------|
+| grip（侧面握把键） | `grip > 0.1` | **死手开关**：按住才下发该臂 CANFD；松开调用 `WristTracker.reset_input_reference()` 并停止下发 |
+| trigger（食指扳机） | `trigger > 0.1` | 夹爪闭合（需 `--ee gripper`）；松开逐步张开 |
+| menu | `menuButton` | 抛出 `KeyboardInterrupt`，走正常清理退出 |
+
+手柄位姿经 `transform_pico4_to_robot_pose()` 转到机器人坐标系后送入 `WristTracker`，
+其余平滑、IK、下发路径与手势模式完全一致。松开 grip 后重新按住时，
+首帧只建立新的位姿基准、不下发运动，因此不会跳变；
+但**方向映射固定使用 Pico 坐标系，换朝向重新抓取不会重定向控制轴**。
+
+### 两指夹爪（`--ee gripper`）
+
+必须与 `--controller` 同时使用，否则启动即报错。这条路径使用 RealMan 官方
+**两指夹爪**接口，与 Inspire 灵巧手的六通道 `Set_Hand_Angle` 是不同设备、不同接口：
+
+| 时机 | 调用 | 说明 |
+|------|------|------|
+| 启动 | `Set_Gripper_Release(speed=1000, block=False, timeout=0)` | 设置最大速度并张开；SDK 无独立测速接口，速度随 Pick/Release 命令下发 |
+| 每轮 | `Set_Gripper_Position(position, block=False, timeout=0)` | 开口度 `1..1000`，`1000` 张开、`1` 闭合 |
+
+程序维护每侧一个开口度标量，仅在数值变化时下发。当前步长为 `1000`，即按下/松开
+一个控制周期内即到极限位置；实际速度由夹爪硬件决定。
+`Set_Gripper_Position` 返回 `0` 只代表控制器接受命令，**不代表夹爪已到位**。
+控制台已把厂商 SDK logger 降为 `WARNING`，避免逐周期刷 `Set_Gripper_Position:0`。
 
 Pico 默认使用本机 relay `127.0.0.1:63902`。先在 Pico 端运行手部追踪发送应用，
 在另一个终端启动（已经运行则不要重复启动）：
@@ -25,8 +61,7 @@ python example/pico4_daemon.py
 
 网络和 Pico 模式在 `config/realman_real.yaml`：左臂 `192.168.10.18`、右臂 `192.168.10.19`，
 当前 SDK 固定 TCP `8080`。`input.mode: direct` 可不用 relay，此时不要同时让 daemon 占用输入端口。
-**本版仅完成离线测试，未进行真机运动验收。** 运行前确认关节序号/零位/方向、硬件使能、
-工作区和实体急停；不要同时运行其他机器人控制程序。
+**运行前确认关节序号/零位/方向、硬件使能、工作区和实体急停；不要同时运行其他机器人控制程序。**
 
 ## 2. 与主分支对应的控制流程
 
@@ -78,13 +113,21 @@ Pico 21点 → AnyDex 原始12维 → 六通道映射 → Set_Hand_Angle(..., bl
 
 ### 初始姿态的位置与参数
 
-目标来自 `utils/robots/realman_rm75b.py`，与已经使用的仿真 home 共用常量，**没有修改仿真值**。
+目标来自 `utils/robots/realman_rm75b.py`，取自现场实测的左臂姿态；右臂为左臂逐关节镜像，
+J7 单独设为 `12.4°`。**这些值已不再等于仿真场景 XML 里的 `home` keyframe**，
+`tests/test_realman_rm75b_inspire.py` 的 keyframe 一致性检查会因此失败。
 下面按各臂 SDK 的 J1…J7 顺序，单位为 **弧度**；适配器发送前转换为角度：
 
 ```python
-LEFT_ARM_HOME_QPOS = (-0.47, 0.0, -0.50, -2.04, 0.62, 1.09, -0.59)
-RIGHT_ARM_HOME_QPOS = (0.47, 0.0, 0.50, 2.04, -0.62, -1.09, 0.59)
+LEFT_ARM_HOME_QPOS = (-0.26918214, -0.80841906, -1.38256250, -1.38533765, 1.00316291, -0.53880060, 0.62032492)
+RIGHT_ARM_HOME_QPOS = (0.26918214, 0.80841906, 1.38256250, 1.38533765, -1.00316291, 0.53880060, 0.21642066)
 ```
+
+左臂对应角度约为 `[-15.42, -46.32, -79.21, -79.37, 57.48, -30.87, 35.54]`。
+
+**该组合在 MuJoCo 自碰撞检查中报双手间隙不足**（`left_thumb_proximal_base` /
+`right_index_proximal`，约 `-0.0066 m`），`example/teleop_realman_real.py` 的相关测试会失败。
+日常入口 `teleop_real.py` 不做碰撞检查，使用前请自行确认两臂到位后的实际间隙。
 
 启动打印 `Moving left/right to initial pose (deg): ...` 后，通过 SDK
 `Movej_Cmd(q_deg, v=20, r=0, trajectory_connect=0, block=True)` 执行规划运动。

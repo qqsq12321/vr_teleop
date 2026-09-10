@@ -19,12 +19,39 @@
 
 ```bash
 conda activate vr_teleop
-python example/teleop_real.py --enable-hands
+
+# 手柄遥操 + 夹爪（推荐）
+python example/teleop_real.py --controller --ee gripper
+
+# 手柄遥操，只控制双臂
+python example/teleop_real.py --controller
+
+# 手势追踪遥操（原有模式，用 Pico 手部追踪而非手柄）
+python example/teleop_real.py
 ```
 
-默认双臂；上述命令同时开启双手。只控制双臂时去掉 `--enable-hands`。
-原命令 `python example/teleop_real.py --arm both --enable-hands` 仍可使用；
-`--arm left|right` 仅用于可选的单臂控制。运行前确认硬件状态、关节零位/方向、工作区及急停。
+默认双臂；`--arm left|right` 用于可选的单臂控制。
+运行前确认硬件状态、关节零位/方向、工作区及急停。
+
+### 手柄键位（`--controller`）
+
+左右手柄分别控制同侧机械臂与夹爪：
+
+| 按键 | 功能 |
+|------|------|
+| grip（侧面握把键） | **死手开关**：按住才下发机械臂运动；松开立即停止并清除位姿基准 |
+| trigger（食指扳机） | 夹爪控制（需 `--ee gripper`）：按住闭合，松开张开 |
+| menu | 退出程序，等同 Ctrl+C |
+
+松开 grip 后重新按住时，会以当前手柄位置作为新的零点重新对齐，不会跳变。
+方向映射使用 Pico 固定坐标系，**换一个朝向重新抓取不会重定向控制轴**。
+
+`--ee gripper` 走 RealMan 官方两指夹爪接口 `Set_Gripper_Position`（开口度 `1..1000`），
+启动时用 `Set_Gripper_Release(speed=1000)` 设为最大速度；这条路径不使用
+Inspire 灵巧手的 `Set_Hand_Angle`。`--ee gripper` 必须与 `--controller` 同时使用。
+控制台已抑制厂商 SDK 的逐条 INFO 日志，仅保留其警告和错误。
+
+### 控制参数
 
 `example/teleop_real.py` 直接按本地 `master` 的 RM65 控制流程实现：
 - 腕跟踪 EMA `0.5`、位移倍率 `1.5`；笛卡尔位置/旋转增益均为 `0.08`。
@@ -36,12 +63,14 @@ python example/teleop_real.py --enable-hands
 
 启动时先调用 `Movej_Cmd(q_deg, v=20, r=0, trajectory_connect=0, block=True)`，
 双臂依次到达项目 RM75 的初始姿态，再重新读取实际关节角建立 FK/IK 和 Pico 基准。
-初始七关节目标复用 `utils/robots/realman_rm75b.py` 的 `LEFT_ARM_HOME_QPOS` / `RIGHT_ARM_HOME_QPOS`
-（弧度，与现有仿真初始姿态相同），不是 RM65 的六轴角度；不执行编码器校零或自动上电。
+初始七关节目标来自 `utils/robots/realman_rm75b.py` 的 `LEFT_ARM_HOME_QPOS` / `RIGHT_ARM_HOME_QPOS`
+（弧度，取自现场实测姿态，右臂为左臂逐关节镜像并单独调整 J7），不是 RM65 的六轴角度；
+不执行编码器校零或自动上电。
 `v=20` 仅是主分支启动 MoveJ 的速度百分比，不改变后续 CANFD 跟随参数。
 初始化失败不会进入遥操或下发手指指令。
 Ctrl+C / SDK 报错时尽力停两臂并断开；不自动取消手指目标，也不保证 SDK 阻塞或进程崩溃时能停机。
-**仅离线验证，尚未完成本版真机验收，不保证实际达到 50Hz。**
+**当前初始姿态在 MuJoCo 模型的自碰撞检查中会报双手间隙不足；日常入口不做该检查，
+使用前请自行确认两臂到位后的实际间隙。**
 
 网络、Pico、控制参数在 `config/realman_real.yaml`。日常入口不调用旧调试循环、
 `SafetySupervisor` 或模型碰撞检查；YAML 的 `safety` 与 `hands.rate_hz` 仅供旧调试入口使用。
@@ -136,14 +165,15 @@ python example/pico4_daemon.py
 python example/teleop_sim.py --input-source pico4 --pico4-mode relay
 
 # RealMan 真机（会连接硬件并先运动到初始姿态；不等待 Pico，无口令确认，不是仿真）
-python example/teleop_real.py --enable-hands
+python example/teleop_real.py --controller --ee gripper
 ```
 
 停止 daemon：在终端 1 按 `Ctrl+C`。
 
 停止方式说明：
 
-- RealMan 真机使用 `Ctrl+C`；SDK 报错会退出并尽力停止两臂。无有效 getter 结果超过 250ms 仅跳过臂下发，恢复后继续；缓存及手指目标行为见上文。
+- RealMan 真机使用 `Ctrl+C` 或手柄 menu 键；SDK 报错会退出并尽力停止两臂。无有效 getter 结果超过 250ms 仅跳过臂下发，恢复后继续；缓存及手指目标行为见上文。
+- 手柄模式下松开 grip 会立即停止下发该臂运动，但这是软件死手开关，**不能替代实体急停**。
 - 其余入口的停止手势依各自实现；不要依赖手势替代实体急停。
 
 ## 仿真入口可选参数

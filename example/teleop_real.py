@@ -205,6 +205,9 @@ def main(argv=None):
                         help='Use Pico controller poses instead of hand/wrist tracking for arm teleoperation')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    # The vendor SDK logs every command at INFO; per-cycle gripper/CANFD calls
+    # would flood the console. Keep its warnings and errors.
+    logging.getLogger('third_party.realman_api.robotic_arm').setLevel(logging.WARNING)
     def terminate(_signum, _frame):
         raise KeyboardInterrupt
     previous = signal.signal(signal.SIGTERM, terminate)
