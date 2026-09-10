@@ -1,285 +1,225 @@
-"""Teleoperate the real DexForce dual-arm + dual-hand humanoid via VR hand tracking.
+#!/usr/bin/env python3
+"""RealMan RM75-B dual-arm teleop, following master's RM65 control loop.
 
-This is a real-robot skeleton adapted from the simulation path. The VR input
-pipeline, WristTracker + Cartesian smoothing, SLERP, and bimanual control loop
-are preserved. The DexForce real-robot SDK calls are left as TODO placeholders
-to be filled in during adaptation.
-
-Input sources (--input-source):
-  quest3          Meta Quest 3 via UDP (default)
-  avp             Apple Vision Pro via avp_stream / Tracking Streamer
-  pico4           Pico 4 via relay / direct TCP
-
-Examples:
-    python example/teleop_real.py --dexforce-ip 192.168.1.50
-    python example/teleop_real.py --input-source avp --avp-ip 192.168.5.32
-    python example/teleop_real.py --input-source pico4
+Pico -> wrist smoothing -> pose IK -> joint passthrough (follow=True).
+Moves real arms to the configured RM75 home BEFORE waiting for Pico tracking,
+then starts teleop. No confirmation prompt or viewer. Default: both arms, hands
+off. --enable-hands enables the connected Inspire pair after startup motion.
 """
-
 from __future__ import annotations
 
-import sys
-from pathlib import Path as _Path
-
-sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-sys.path.insert(1, str(_Path(__file__).resolve().parent.parent / "third_party" / "AnyDexRetarget"))
-
 import argparse
-import time
+import logging
 from pathlib import Path
+import signal
+import sys
+import time
+from types import SimpleNamespace
 
-import mujoco
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-from utils.core.arm_controller import TeleopArmController
-from utils.core.input_stream import TeleopInputStream
-from utils.core.hand.retarget import (
-    default_linker_l20_config_path,
-    default_pico4_config_path,
-)
-from utils.core.quaternion import (
-    transform_quest3_raw_to_robot_pose,
-)
-from utils.adapters.output.dexforce_real import DexForceRealArm
-from utils.robots.dexforce import DexForceSpec
-
-# ---------------------------------------------------------------------------
-# Scene / config paths
-# ---------------------------------------------------------------------------
-
-_DEXFORCE_SPEC = DexForceSpec()
-_DEXFORCE_SCENE = _DEXFORCE_SPEC.scene_path
-_DEXFORCE_HAND_TYPE = _DEXFORCE_SPEC.hand_type
-
-# ---------------------------------------------------------------------------
-# Real-robot tuning constants (adapt during DexForce integration)
-# ---------------------------------------------------------------------------
-
-_CONTROL_PERIOD_S = 0.02
-_PACKET_TIMEOUT_S = 0.25
-_POSITION_SCALE = 3.0
-_EMA_ALPHA = 0.8
-_ROT_WEIGHT = 1.0
-_IK_DAMPING = 1e-3
-_IK_CURRENT_WEIGHT = 0.1
-_WRIST_POS_DEADBAND = 0.03
-_WRIST_ROT_DEADBAND_DEG = 8.0
-# Cartesian smoothing gains (per-frame fraction toward tracker target)
-_POS_GAIN = 0.08
-_ROT_GAIN = 0.08
+# master:example/teleop_real.py, RM65 constants. Hardware/model mapping is RM75.
+CONTROL_PERIOD_S = 0.02
+PACKET_TIMEOUT_S = 0.25
+POSITION_DEADBAND = 0.03
+ROTATION_DEADBAND_DEG = 8.0
 
 
-def _resolve_hand_config(args: argparse.Namespace, side: str = "right") -> str:
-    """Resolve linker_l20 retarget config path for the given input source / side."""
-    if args.hand_config:
-        return args.hand_config
-    if args.input_source == "pico4":
-        return str(default_pico4_config_path(side=side))
-    return str(default_linker_l20_config_path(args.input_source, side=side))
+def _transport_guard(_now):
+    """No additional host deadline policy on the master's direct-send path."""
 
 
-# ---------------------------------------------------------------------------
-# Initial pose helpers
-# ---------------------------------------------------------------------------
+def run(args, *, output_factory=None, input_factory=None, retargeter_factory=None,
+        clock=None):
+    # Lazy imports keep --help from loading the robot stack.
+    sys.path.insert(0, str(ROOT / 'third_party' / 'AnyDexRetarget'))
+    import mujoco
+    import numpy as np
+    import yaml
 
+    from utils.adapters.input.pico4 import Pico4, transform_pico4_to_robot_pose
+    from utils.adapters.output.inspire_mapping import raw_qpos_to_channels
+    from utils.adapters.output.realman_real import RealManOutput
+    from utils.core.arm_controller import slerp_step
+    from utils.core.body.ik import solve_pose_ik
+    from utils.core.body.wrist_tracker import WristTracker
+    from utils.core.hand.retarget import HandRetargeter
+    from utils.core.quaternion import matrix_to_quaternion, quaternion_to_matrix
+    from utils.robots.realman_rm75b import RealManRM75BInspireSpec
 
-def _apply_initial_pose_dexforce(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
-    mujoco.mj_resetDataKeyframe(model, data, key_id)
-    mujoco.mj_forward(model, data)
-
-
-def _controller_kwargs(side: str) -> dict:
-    return {
-        "robot_label": "DexForce",
-        "home_qpos": _DEXFORCE_SPEC.arm_home_qpos(side),
-        "arm_joint_names": _DEXFORCE_SPEC.arm_joint_names(side),
-        "hand_joint_names": _DEXFORCE_SPEC.hand_joint_names(side),
-        "ee_body_name": _DEXFORCE_SPEC.ee_body_name(side),
-        "base_body_name": _DEXFORCE_SPEC.base_body_name,
-        "hand_qpos_mapping": _DEXFORCE_SPEC.hand_qpos_mapping,
-        "position_deadband": _WRIST_POS_DEADBAND,
-        "rotation_deadband_deg": _WRIST_ROT_DEADBAND_DEG,
-        "pos_gain": _POS_GAIN,
-        "rot_gain": _ROT_GAIN,
-    }
-
-
-def _dispatch_real_arm(controller: TeleopArmController, real_arm: DexForceRealArm, q_sol) -> None:
-    if q_sol is None:
-        return
-    real_arm.send_arm_qpos(q_sol[controller.arm_dof_indices])
-    mapped_hand_qpos = controller.mapped_hand_qpos()
-    if mapped_hand_qpos is not None:
-        real_arm.send_hand_qpos(mapped_hand_qpos)
-    controller.write_solution_to_data(q_sol, include_hand=False)
-
-
-# ---------------------------------------------------------------------------
-# DexForce real-robot bimanual teleop loop
-# ---------------------------------------------------------------------------
-
-
-def _run_dexforce_real(args: argparse.Namespace) -> None:
-    xml_path = Path(args.scene or _DEXFORCE_SCENE).expanduser().resolve()
-    print(f"Loading scene from: {xml_path}")
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
+    clock = time if clock is None else clock
+    output_factory = RealManOutput if output_factory is None else output_factory
+    input_factory = Pico4 if input_factory is None else input_factory
+    retargeter_factory = HandRetargeter if retargeter_factory is None else retargeter_factory
+    controller_mode = bool(getattr(args, 'controller', False))
+    gripper_mode = getattr(args, 'ee', None) == 'gripper'
+    enable_hands = bool(getattr(args, 'enable_hands', False)) and not gripper_mode
+    if gripper_mode and not controller_mode:
+        raise ValueError('--ee gripper requires --controller')
+    with (ROOT / 'config/realman_real.yaml').open(encoding='utf-8') as stream:
+        config = yaml.safe_load(stream)
+    with (ROOT / 'config/realman_calibration.yaml').open(encoding='utf-8') as stream:
+        calibration = yaml.safe_load(stream)
+    ctrl, inp = config['control'], config['input']
+    spec = RealManRM75BInspireSpec()
+    sides = ('left', 'right') if args.arm == 'both' else (args.arm,)
+    model = mujoco.MjModel.from_xml_path(str(spec.scene_path))
     data = mujoco.MjData(model)
-    ik_data = mujoco.MjData(model)
-
-    _apply_initial_pose_dexforce(model, data)
-
-    dexforce_hand_type = _DEXFORCE_HAND_TYPE
-    left_hand_config = _resolve_hand_config(args, side="left")
-    right_hand_config = _resolve_hand_config(args, side="right")
-
-    # Connect to real DexForce arms/hands
-    left_real = DexForceRealArm("left", args.dexforce_ip)
-    right_real = DexForceRealArm("right", args.dexforce_ip)
-    left_real.connect()
-    right_real.connect()
-
-    left_arm = TeleopArmController(
-        model, data, ik_data, "left", args,
-        hand_config=left_hand_config,
-        hand_type=dexforce_hand_type,
-        **_controller_kwargs("left"),
-    )
-    right_arm = TeleopArmController(
-        model, data, ik_data, "right", args,
-        hand_config=right_hand_config,
-        hand_type=dexforce_hand_type,
-        **_controller_kwargs("right"),
-    )
-
-    # Sync MuJoCo state with real joint readings + reset tracker baseline
-    left_arm.sync_from_joint_positions(left_real.get_joint_positions_rad())
-    right_arm.sync_from_joint_positions(right_real.get_joint_positions_rad())
-
-    input_stream = TeleopInputStream(args)
-
-    print(f"  DexForce IP: {args.dexforce_ip}")
-    print("Starting DexForce real teleoperation loop...")
-    print("Press Ctrl+C to stop.")
-
-    last_log_time = time.time()
-    last_valid_packet_time = 0.0
-
+    addresses = {s: np.array([model.jnt_qposadr[model.joint(n).id]
+                             for n in spec.arm_joint_names(s)])
+                 for s in ('left', 'right')}
+    output, pico = None, None
     try:
+        # Load all requested hand configurations before allowing any arm motion.
+        retargeters = {}
+        for side in sides:
+            retargeter = (retargeter_factory(spec.hand_config_path('pico4', side), side)
+                          if enable_hands and not controller_mode else None)
+            if retargeter is not None and not retargeter.available:
+                raise RuntimeError(f'{side}: hand retargeter unavailable')
+            retargeters[side] = retargeter
+        output = output_factory(**config['network'], **calibration)
+        output.connect()  # Check both controllers and their current fault state.
+        output.enable_motion()
+        # Match master's planned, blocking startup move, using RM75's seven-joint
+        # home (not RM65's six-axis values). SDK calls remain serial for both arms.
+        for side in sides:
+            q_home = spec.arm_home_qpos(side)
+            print(f'Moving {side} to initial pose (deg): {output.model_to_sdk_degrees(side, q_home).round(2).tolist()}', flush=True)
+            output.move_to_initial_pose(side, q_home, guard=_transport_guard)
+        # Re-read AFTER all startup moves. Never use the pre-move feedback or
+        # merely assume the commanded home was reached when establishing FK/IK.
+        states = output.read_feedback()
+        for side, indices in addresses.items():
+            data.qpos[indices] = states[side].q_rad
+        mujoco.mj_forward(model, data)
+        arms = {}
+        for side in sides:
+            site_id = model.site(f'{side}_tcp').id
+            position = data.site_xpos[site_id].copy()
+            quaternion = matrix_to_quaternion(data.site_xmat[site_id].reshape(3, 3))
+            tracker = WristTracker(
+                position, quaternion, position_scale=ctrl['position_scale'],
+                ema_alpha=ctrl['ema_alpha'], negate_rot_xy=False,
+                base_xmat=None, position_deadband=POSITION_DEADBAND,
+                rotation_deadband_deg=ROTATION_DEADBAND_DEG)
+            retargeter = retargeters[side]
+            arms[side] = SimpleNamespace(
+                tracker=tracker, site_id=site_id, ik_data=mujoco.MjData(model),
+                cmd_pos=position.copy(), cmd_quat=np.array(quaternion),
+                home=data.qpos[addresses[side]].copy(), retargeter=retargeter,
+                hand_angles=None, last_valid=0.)
+        pico = input_factory(mode=inp['mode'], relay_host=inp['relay_host'],
+                             relay_port=inp['relay_port'], port=inp['direct_port'],
+                             broadcast_port=inp['broadcast_port'])
+        if enable_hands:
+            output.configure_hands(dict(config['hands'], sides=sides), guard=_transport_guard)
+        if gripper_mode:
+            for side in sides:
+                output.configure_gripper_speed(side, 1000, guard=_transport_guard)
+        gripper_position = {side: 1000 for side in sides}
+        last_gripper_command = {side: None for side in sides}
+        gripper_step = 1000
+        print(f'MOTION ENABLED; arm={args.arm}; hands={enable_hands}; controller={controller_mode}; master-style loop', flush=True)
+        print('Initial pose motion completed. First wrist frame aligns to the measured pose; Ctrl+C stops.', flush=True)
         while True:
-            loop_start = time.time()
-            now = loop_start
-            saw_valid_data = False
-
-            poll_result = input_stream.poll_arms(
-                left_arm,
-                right_arm,
-                transform_quest3_raw_to_robot_pose,
-                allow_stop_gesture=True,
-            )
-            if poll_result.stop_requested:
-                print("\nStopping teleoperation (stop gesture)...")
-                break
-            saw_valid_data = poll_result.saw_valid_data
-
-            if saw_valid_data:
-                last_valid_packet_time = loop_start
-
-            # --- Dispatch to real arms/hands ---
-            q_left = left_arm.step_smoothed_ik(last_valid_packet_time, now, _PACKET_TIMEOUT_S)
-            q_right = right_arm.step_smoothed_ik(last_valid_packet_time, now, _PACKET_TIMEOUT_S)
-            _dispatch_real_arm(left_arm, left_real, q_left)
-            _dispatch_real_arm(right_arm, right_real, q_right)
-
-            # --- Logging ---
-            now = time.time()
-            if (
-                left_arm.latest_residual is not None
-                and now - last_log_time > 1.0
-            ):
-                print(
-                    f"L resid: {left_arm.latest_residual} "
-                    f"R resid: {right_arm.latest_residual}"
-                )
-                last_log_time = now
-
-            elapsed = time.time() - loop_start
-            sleep_time = _CONTROL_PERIOD_S - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-    except KeyboardInterrupt:
-        print("\nStopping teleoperation...")
+            loop_start = clock.monotonic()
+            # Same Pico getter/cache semantics as master. Valid wrist OR hand
+            # data refreshes that arm's last-valid-packet time, as in RM65.
+            for side, arm in arms.items():
+                saw_valid_data = False
+                wrist = pico.get_wrist_pose(side)
+                if controller_mode:
+                    controller = pico.get_controller(side)
+                    if controller is not None:
+                        if controller.get('menuButton', False):
+                            raise KeyboardInterrupt
+                        if gripper_mode:
+                            trigger = float(controller.get('trigger', 0.0))
+                            if trigger > 0.1:
+                                gripper_position[side] = max(
+                                    1, gripper_position[side] - max(1, int(round(gripper_step * trigger))))
+                            else:
+                                gripper_position[side] = min(
+                                    1000, gripper_position[side] + gripper_step)
+                        if float(controller.get('grip', 0.0)) <= 0.1:
+                            arm.tracker.reset_input_reference()
+                            continue
+                        pose = controller['pose']
+                        wrist = transform_pico4_to_robot_pose(pose[:3], pose[3:7])
+                if wrist is not None:
+                    arm.tracker.update(*wrist)
+                    saw_valid_data = True
+                if arm.retargeter is not None:
+                    points = pico.get_landmarks_mediapipe(side)
+                    if points is not None:
+                        raw = arm.retargeter.retarget_mediapipe(points)
+                        if raw is not None and np.shape(raw) == (12,) and np.all(np.isfinite(raw)):
+                            # Master normalizes to 0..2000, then divides by two
+                            # at its serial boundary. Native SDK needs 0..1000.
+                            channels = raw_qpos_to_channels(raw, spec, scale=2000)
+                            arm.hand_angles = [int(round(v / 2.0)) for v in channels]
+                            saw_valid_data = True
+                if saw_valid_data:
+                    arm.last_valid = loop_start
+            for side, arm in arms.items():
+                if arm.tracker.initialized and clock.monotonic() - arm.last_valid <= PACKET_TIMEOUT_S:
+                    arm.cmd_pos += (arm.tracker.target_position - arm.cmd_pos) * ctrl['pos_gain']
+                    arm.cmd_quat = slerp_step(arm.cmd_quat, arm.tracker.target_quaternion, ctrl['rot_gain'])
+                    q_sol = solve_pose_ik(
+                        model, arm.ik_data, arm.site_id, arm.cmd_pos, arm.cmd_quat,
+                        data.qpos.copy(), rot_weight=ctrl['rot_weight'],
+                        damping=ctrl['ik_damping'], current_q_weight=ctrl['ik_current_weight'],
+                        home_qpos=arm.home, skip_tail_joints=0, dof_indices=addresses[side])
+                    output.send_joints(side, q_sol[addresses[side]],
+                                       guard=_transport_guard, follow=ctrl['follow'])
+                    data.qpos[addresses[side]] = q_sol[addresses[side]]
+                # Master sends the last valid hand target outside the arm timeout
+                # branch, with no added 10 Hz cap, sample dedup, or ±20 slew limit.
+                if gripper_mode and controller_mode and last_gripper_command[side] != gripper_position[side]:
+                    output.send_gripper_position(side, gripper_position[side], guard=_transport_guard)
+                    last_gripper_command[side] = gripper_position[side]
+                if arm.hand_angles is not None and not (enable_hands and controller_mode):
+                    output.send_hand(side, arm.hand_angles, guard=_transport_guard)
+            remaining = CONTROL_PERIOD_S - (clock.monotonic() - loop_start)
+            if remaining > 0:
+                clock.sleep(remaining)
     finally:
-        for arm in (left_real, right_real):
-            try:
-                arm.close()
-            except Exception as exc:
-                print(f"Warning: DexForce {arm.side} close failed: {exc}")
-        input_stream.close()
+        try:
+            if output is not None:
+                output.close()  # Best-effort stop both arms, then disconnect.
+        finally:
+            if pico is not None:
+                pico.stop()
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--arm', choices=('left', 'right', 'both'), default='both',
+                        help='Arm selection (default: both; single-arm option retained)')
+    parser.add_argument('--ee', choices=('gripper',),
+                        help='Enable official RealMan gripper control; requires --controller')
+    parser.add_argument('--enable-hands', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--controller', action='store_true',
+                        help='Use Pico controller poses instead of hand/wrist tracking for arm teleoperation')
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    def terminate(_signum, _frame):
+        raise KeyboardInterrupt
+    previous = signal.signal(signal.SIGTERM, terminate)
+    try:
+        run(args)
+    except KeyboardInterrupt:
+        print('Stopped by operator.')
+        return 130
+    except Exception as exc:
+        logging.error('Session aborted: %s', exc)
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    return 0
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Teleoperate the real DexForce dual-arm humanoid with VR hand tracking."
-    )
-    parser.add_argument("--dexforce-ip", default="192.168.1.50", help="DexForce robot IP.")
-    parser.add_argument(
-        "--scene",
-        default=None,
-        help="Override scene XML path (default: scene_dexforce.xml).",
-    )
-    parser.add_argument("--port", type=int, default=9000, help="UDP port to listen on.")
-    parser.add_argument(
-        "--hand-config",
-        default=None,
-        help="Path to linker_l20 retargeter YAML config.",
-    )
-    parser.add_argument(
-        "--position-scale", type=float, default=_POSITION_SCALE,
-        help="Scale for wrist position residuals.",
-    )
-    parser.add_argument(
-        "--ema-alpha", type=float, default=_EMA_ALPHA,
-        help="EMA smoothing factor for wrist residuals (0-1).",
-    )
-    parser.add_argument(
-        "--rot-weight", type=float, default=_ROT_WEIGHT,
-        help="Weight for orientation error in IK.",
-    )
-    parser.add_argument(
-        "--ik-damping", type=float, default=_IK_DAMPING,
-        help="Damping factor for IK solver.",
-    )
-    parser.add_argument(
-        "--ik-current-weight", type=float, default=_IK_CURRENT_WEIGHT,
-        help="Weight for penalizing deviation from current pose in IK.",
-    )
-    parser.add_argument("--input-source", default="quest3", choices=["quest3", "avp", "pico4"],
-                        help="Input device: quest3 (UDP, default), avp, or pico4.")
-    parser.add_argument("--avp-ip", default="192.168.1.100",
-                        help="Apple Vision Pro IP address (used with --input-source avp).")
-    parser.add_argument("--pico4-mode", default="relay", choices=["relay", "direct"],
-                        help="Pico 4 input mode: relay daemon (default) or direct TCP server.")
-    parser.add_argument("--pico4-port", type=int, default=63901,
-                        help="Pico 4 direct-mode TCP listen port.")
-    parser.add_argument("--pico4-relay-host", default="127.0.0.1",
-                        help="Pico 4 relay daemon host.")
-    parser.add_argument("--pico4-relay-port", type=int, default=63902,
-                        help="Pico 4 relay daemon port.")
-    parser.add_argument("--pico4-broadcast-port", type=int, default=29888,
-                        help="Pico 4 direct-mode UDP broadcast port.")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = _parse_args()
-    _run_dexforce_real(args)
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    raise SystemExit(main())
