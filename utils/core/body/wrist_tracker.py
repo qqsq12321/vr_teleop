@@ -76,6 +76,26 @@ class WristTracker:
         self.residual = None
         self.euler_residual = None
 
+    def reset_input_reference(self) -> None:
+        """Forget the previous VR sample so the next sample becomes a new anchor."""
+        self._initial_wrist_position = None
+        self._initial_wrist_quaternion = None
+        self._smoothed_residual = None
+        self.target_position = self._initial_site_pos.copy()
+        self.target_quaternion = self._initial_site_quat.copy()
+        self.residual = None
+        self.euler_residual = None
+
+    def anchor_input(self, robot_position: tuple, robot_quaternion: tuple) -> None:
+        """Anchor the next residuals to the supplied robot-space input pose."""
+        self._initial_wrist_position = tuple(float(v) for v in robot_position)
+        self._initial_wrist_quaternion = tuple(float(v) for v in robot_quaternion)
+        self._smoothed_residual = None
+        self.target_position = self._initial_site_pos.copy()
+        self.target_quaternion = self._initial_site_quat.copy()
+        self.residual = None
+        self.euler_residual = None
+
     def update(self, robot_position: tuple, robot_quaternion: tuple) -> None:
         """Update target pose from a new VR wrist observation."""
         if self._initial_wrist_position is None:

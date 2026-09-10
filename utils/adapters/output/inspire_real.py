@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from utils.robots.galbot import GalbotInspireSpec
+from utils.adapters.output.inspire_mapping import raw_qpos_to_channels
 
 
 _RESPONSE_TIMEOUT_S = 0.01
@@ -15,23 +16,7 @@ _SPEC = GalbotInspireSpec()
 
 def retarget_qpos_to_channels(retarget_output: np.ndarray) -> list[int]:
     """Map AnyDexRetarget's 12-D Inspire qpos output to 6 hardware channels."""
-    output = np.asarray(retarget_output, dtype=np.float64)
-    if output.shape[0] < len(_SPEC.hand_joint_suffixes):
-        raise ValueError(f"Expected at least 12 Inspire joints, got shape {output.shape}")
-    if not np.all(np.isfinite(output)):
-        raise ValueError("Invalid Inspire retarget output: contains NaN/Inf")
-
-    result: list[int] = []
-    for idx, max_rad, invert in zip(
-        _SPEC.inspire_channel_indices,
-        _SPEC.inspire_channel_max_rad,
-        _SPEC.inspire_channel_invert,
-    ):
-        value = float(np.clip(output[idx] / max_rad, 0.0, 1.0))
-        if invert:
-            value = 1.0 - value
-        result.append(int(value * 2000))
-    return result
+    return raw_qpos_to_channels(retarget_output, _SPEC, scale=2000)
 
 
 def encode_inspire_channels(channels: list[int]) -> list[int]:

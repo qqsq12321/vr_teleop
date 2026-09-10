@@ -106,11 +106,11 @@ def _open_hand_output(port: str | None, baudrate: int, hand_id: int, side: str):
 def _send_hand(side: str, output: InspireSerialOutput | None, controller: TeleopArmController) -> InspireSerialOutput | None:
     if output is None:
         return None
-    mapped = controller.mapped_hand_qpos()
-    if mapped is None:
+    raw_qpos = controller.latest_hand_qpos  # Hardware mapper expects raw AnyDex order.
+    if raw_qpos is None:
         return output
     try:
-        output.send_hand_qpos(mapped)
+        output.send_hand_qpos(raw_qpos)
     except Exception as exc:
         print(f"Warning: disabling {side} Inspire hand after serial send failure: {exc}")
         try:

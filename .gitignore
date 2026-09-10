@@ -24,3 +24,8 @@ MUJOCO_LOG.TXT
 
 # Old path
 quest_teleop_mujoco/mujoco_menagerie/
+
+# Vendor SDKs and robot models: install locally, not tracked here
+third_party/realman_api/
+third_party/rm_models/
+third_party/mujoco_menagerie/

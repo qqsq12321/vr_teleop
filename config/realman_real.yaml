@@ -1,0 +1,40 @@
+# Daily real entry: master RM65 control parameters, adapted to RM75 dual arms.
+# No hardware performance guarantee. The safety section is for the legacy debug runner only.
+network:
+  left_ip: 192.168.10.18
+  right_ip: 192.168.10.19
+  # The vendored legacy SDK fixes TCP port to 8080.
+input:
+  mode: relay
+  relay_host: 127.0.0.1
+  relay_port: 63902
+  direct_port: 63901
+  broadcast_port: 29888
+control:
+  position_scale: 1.5
+  ema_alpha: 0.5
+  rot_weight: 1.0
+  ik_damping: 0.001
+  ik_current_weight: 0.3
+  pos_gain: 0.08
+  rot_gain: 0.08
+  follow: true
+safety:  # teleop_realman_real.py only; not used by the daily master-style loop.
+  rate_hz: 50.0
+  input_timeout_s: 0.25
+  feedback_timeout_s: 0.2
+  command_timeout_s: 0.08
+  joint_margin_rad: 0.0872664626
+  tracking_error_rad: 0.1745329252
+  tracking_error_grace_s: 0.2
+  collision_margin_m: 0.02
+hands:
+  # Always OFF unless --enable-hands. Explicitly verify the chosen backend.
+  backend: native        # native: Set_Hand_Angle; modbus: Write_Registers
+  rate_hz: 10.0  # Legacy debug runner only; daily entry sends hands each loop.
+  # Speed/force must be set and verified on the hand externally before use.
+  # No automatic tool voltage, force, speed, or Modbus register probing.
+  baudrate: 115200
+  timeout_100ms: 1
+  address: 1486          # Six angle-set registers; byte order MSB first.
+  device_id: 1

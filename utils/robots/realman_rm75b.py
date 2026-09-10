@@ -28,8 +28,8 @@ ANYDEX_ADAPTIVE_CONFIG_DIR = (
 
 # A symmetric, folded-forward pose expressed in the vendor RM75-B joint frames.
 # It keeps the elbows outside the torso and points both Inspire hands forward.
-LEFT_ARM_HOME_QPOS = (-0.47, 0.0, -0.50, -2.04, 0.62, 1.09, -0.59)
-RIGHT_ARM_HOME_QPOS = (0.47, 0.0, 0.50, 2.04, -0.62, -1.09, 0.59)
+LEFT_ARM_HOME_QPOS = (-0.26918214, -0.80841906, -1.38256250, -1.38533765, 1.00316291, -0.53880060, 0.62032492)
+RIGHT_ARM_HOME_QPOS = (0.26918214, 0.80841906, 1.38256250, 1.38533765, -1.00316291, 0.53880060, 0.21642066)
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,43 @@
 | 命令 | 机器人 | 模式 | 说明 |
 |------|--------|------|------|
 | `teleop_sim.py` | DexForce 双臂 + 双手 | 仿真 | MuJoCo XML 场景，左右手控制双臂；手部重定向为 linker_l20 |
-| `teleop_real.py` | DexForce 双臂 + 双手 | 实物 | 骨架已就绪，需适配 DexForce 真机 SDK |
+| `teleop_real.py` | RealMan RM75-B + Inspire RH56DFX | 实物 | 按 master 的 RM65 流程适配双臂七关节，先到初始姿态，再 Pico → IK → CANFD；无口令确认 |
+| `teleop_realman_real.py` | RealMan RM75-B + Inspire RH56DFX | 兼容调试入口 | 独立的旧检查/离线预览流程；日常真机入口不调用它 |
+
+## RealMan + Inspire 真机入口
+
+日常真机遥操使用这个入口（**连接真机后先运动到初始姿态，不等待 Pico 追踪，无口令确认**）：
+
+```bash
+conda activate vr_teleop
+python example/teleop_real.py --enable-hands
+```
+
+默认双臂；上述命令同时开启双手。只控制双臂时去掉 `--enable-hands`。
+原命令 `python example/teleop_real.py --arm both --enable-hands` 仍可使用；
+`--arm left|right` 仅用于可选的单臂控制。运行前确认硬件状态、关节零位/方向、工作区及急停。
+
+`example/teleop_real.py` 直接按本地 `master` 的 RM65 控制流程实现：
+- 腕跟踪 EMA `0.5`、位移倍率 `1.5`；笛卡尔位置/旋转增益均为 `0.08`。
+- `solve_pose_ik` 的 `rot_weight=1.0`、`damping=0.001`、`current_q_weight=0.3`；
+  用上一次 IK 结果作为下一次初值，取每臂七关节，转角度后 `Movej_CANFD(..., follow=True)`。
+- 名义周期 `20ms`，只补足剩余休眠；不再另加关节低速限制、固定 `100ms` 退出或 `150ms` 新帧退出。
+- 与主分支一致：超过 `250ms` 没有有效 getter 结果时跳过该臂下发，不退出；输入恢复后沿用原基准。
+  **Pico getter 会返回缓存，因此这不是网络断流检测。** 已有手指目标仍每轮下发，不受臂的这一超时分支控制。
+
+启动时先调用 `Movej_Cmd(q_deg, v=20, r=0, trajectory_connect=0, block=True)`，
+双臂依次到达项目 RM75 的初始姿态，再重新读取实际关节角建立 FK/IK 和 Pico 基准。
+初始七关节目标复用 `utils/robots/realman_rm75b.py` 的 `LEFT_ARM_HOME_QPOS` / `RIGHT_ARM_HOME_QPOS`
+（弧度，与现有仿真初始姿态相同），不是 RM65 的六轴角度；不执行编码器校零或自动上电。
+`v=20` 仅是主分支启动 MoveJ 的速度百分比，不改变后续 CANFD 跟随参数。
+初始化失败不会进入遥操或下发手指指令。
+Ctrl+C / SDK 报错时尽力停两臂并断开；不自动取消手指目标，也不保证 SDK 阻塞或进程崩溃时能停机。
+**仅离线验证，尚未完成本版真机验收，不保证实际达到 50Hz。**
+
+网络、Pico、控制参数在 `config/realman_real.yaml`。日常入口不调用旧调试循环、
+`SafetySupervisor` 或模型碰撞检查；YAML 的 `safety` 与 `hands.rate_hz` 仅供旧调试入口使用。
+仿真入口不改动；真机只使用 MuJoCo 做 FK/IK，不启动仿真或查看器。
+详细说明见 [RealMan 真机使用说明](docs/realman_real.md)。
 
 ## 前置条件
 
@@ -32,7 +68,7 @@
 
 ### PC 端
 
-- Python 3.12+（`pyproject.toml` 当前要求 `>=3.12`），conda 环境 `teleop`（`conda activate teleop`）
+- Python 3.12+（`pyproject.toml` 当前要求 `>=3.12`），conda 环境 **`vr_teleop`**（`conda activate vr_teleop`）
 - MuJoCo (`pip install mujoco`)
 
 ### 第三方仓库（位于 `third_party/`）
@@ -50,13 +86,13 @@ git submodule update --init --recursive
 ### 额外依赖（按功能）
 
 - **Apple Vision Pro 输入**: `avp-stream>=2.50.0` (`pip install avp-stream`)
-- **DexForce 实物控制**: 待适配（详见 `example/teleop_real.py` 中 `DexForceRealArm` TODO）
+- **DexForce 实物后端**: `utils/adapters/output/dexforce_real.py` 仍是未接 SDK 的占位实现；`teleop_real.py` 已改用于 RealMan。
 
 ## 运行命令
 
 ### Pico 4 输入（本文档默认）
 
-本文档优先介绍 Pico 4；程序仍保留原始 CLI 默认值 `quest3`，因此使用 Pico 4 时需要显式指定输入源。
+仿真入口默认输入仍为 `quest3`，使用 Pico 4 时需显式指定；RealMan 真机入口固定使用 Pico，模式由 YAML 配置。
 
 ```bash
 # DexForce 双臂 + 双手（仿真）
@@ -71,20 +107,16 @@ python example/teleop_sim.py --input-source pico4 --pico4-mode direct
 # DexForce 双臂 + 双手（仿真）
 python example/teleop_sim.py --input-source quest3 --port 9000
 
-# DexForce 双臂 + 双手（实物骨架）
-python example/teleop_real.py --dexforce-ip 192.168.1.50 --port 9000
 ```
 
 ### Apple Vision Pro 输入
 
-在任意命令后追加 `--input-source avp --avp-ip <Vision Pro IP>`:
+在仿真命令后追加 `--input-source avp --avp-ip <Vision Pro IP>`（RealMan 精简真机入口仅接 Pico）:
 
 ```bash
 # DexForce 双臂 + 双手（仿真）
 python example/teleop_sim.py --input-source avp --avp-ip 192.168.5.32
 
-# DexForce 双臂 + 双手（实物骨架）
-python example/teleop_real.py --input-source avp --avp-ip 192.168.5.32 --dexforce-ip 192.168.1.50
 ```
 
 ### Pico 4 relay 模式
@@ -103,18 +135,18 @@ python example/pico4_daemon.py
 # DexForce 双臂 + 双手（仿真）
 python example/teleop_sim.py --input-source pico4 --pico4-mode relay
 
-# DexForce 双臂 + 双手（实物骨架）
-python example/teleop_real.py --input-source pico4 --dexforce-ip 192.168.1.50
+# RealMan 真机（会连接硬件并先运动到初始姿态；不等待 Pico，无口令确认，不是仿真）
+python example/teleop_real.py --enable-hands
 ```
 
 停止 daemon：在终端 1 按 `Ctrl+C`。
 
 停止方式说明：
 
-- Apple Vision Pro 实物路径当前支持左手握拳保持约 3 秒停止
-- 其余模式默认使用 `Ctrl+C`
+- RealMan 真机使用 `Ctrl+C`；SDK 报错会退出并尽力停止两臂。无有效 getter 结果超过 250ms 仅跳过臂下发，恢复后继续；缓存及手指目标行为见上文。
+- 其余入口的停止手势依各自实现；不要依赖手势替代实体急停。
 
-## 可选参数
+## 仿真入口可选参数
 
 输入源:
 - `--input-source quest3|avp|pico4` — 输入设备（CLI 默认 quest3；本文档默认介绍 pico4）
@@ -227,7 +259,7 @@ vr_teleop/
 
 - **Sim/Real 双入口**：
   - `teleop_sim.py` — `viewer.launch_passive` 可视化，`DexForceArmController.apply_qpos` 直接写 MuJoCo `data.qpos`，含 Pico4 头追→躯干/颈部联动
-  - `teleop_real.py` — `DexForceArmController.step` 走笛卡尔平滑层（`cmd_pos += (target-cmd_pos)*gain` + SLERP）后 IK，再由 `DexForceRealArm` 发送真机指令；`DexForceRealArm` 为待适配骨架
+  - `teleop_real.py` — 按 master 的 RM65 控制循环适配 RM75 双臂；`WristTracker` → 笛卡尔平滑 → `solve_pose_ik` → `RealManOutput`，不调用旧调试保护循环或查看器。
 - **WristTracker 共享**：仿真与实物共用同一残差跟踪器，首帧锁定初始位姿，后续残差经 EMA 平滑后乘 `position_scale` 累加到目标位姿。实物路径额外加笛卡尔平滑层与 deadband。
 - **手部重定向**：`HandRetargeter` 封装 `AnyDexRetarget`（git submodule），按 input_source 路由到 linker_l20 YAML 配置。Quest3 用 63 维原始 landmarks（经 `landmarks_to_mediapipe` 转 RH），AVP/Pico4 用 21×3 mediapipe 格式。
 
