@@ -107,6 +107,15 @@ class AVPInput:
             return None
         pos = np.asarray(wrist_mat[:3, 3], dtype=np.float64)
         rot = np.asarray(wrist_mat[:3, :3], dtype=np.float64)
+        # avp_stream substitutes a placeholder identity matrix for a hand it has
+        # no data for yet (streamer.py: ``data.get("left_wrist", np.eye(4))``),
+        # and that passes every None check above. Accepting it locks the tracker
+        # baseline onto the headset origin, so the first genuinely tracked frame
+        # arrives as a residual the size of the hand's absolute coordinates --
+        # metres, not centimetres. A real wrist is never exactly at the origin.
+        # get_landmarks_mediapipe already rejects its zero placeholder the same way.
+        if np.allclose(pos, 0.0):
+            return None
         return transform_avp_to_robot_pose(pos, rot)
 
     # -- hand landmarks -----------------------------------------------------
