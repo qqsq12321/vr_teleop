@@ -37,6 +37,7 @@ from utils.core.quaternion import (
 from utils.robots.dexforce import DexForceSpec
 from utils.robots.galbot import GalbotInspireSpec
 from utils.robots.realman_rm75b import RealManRM75BInspireSpec
+from utils.robots.realman_rm75b_l20 import RealManRM75BL20Spec
 
 # ---------------------------------------------------------------------------
 # Scene / config paths
@@ -45,6 +46,7 @@ from utils.robots.realman_rm75b import RealManRM75BInspireSpec
 _DEXFORCE_SPEC = DexForceSpec()
 _GALBOT_SPEC = GalbotInspireSpec()
 _REALMAN_RM75B_SPEC = RealManRM75BInspireSpec()
+_REALMAN_RM75B_L20_SPEC = RealManRM75BL20Spec()
 
 
 _DEFAULT_HANDS = {
@@ -62,6 +64,7 @@ _ROBOT_HAND_SPECS = {
     ("dexforce", "linker_l20"): _DEXFORCE_SPEC,
     ("galbot", "inspire"): _GALBOT_SPEC,
     ("realman_rm75b", "inspire"): _REALMAN_RM75B_SPEC,
+    ("realman_rm75b", "linker_l20"): _REALMAN_RM75B_L20_SPEC,
 }
 
 
@@ -368,7 +371,8 @@ def main() -> None:
         choices=sorted(_HAND_ALIASES),
         help=(
             "Dexterous hand/end-effector: defaults to linker_l20 for dexforce "
-            "and inspire for galbot/realman_rm75b."
+            "and inspire for galbot/realman_rm75b. realman_rm75b also accepts "
+            "linker_l20."
         ),
     )
     parser.add_argument(

@@ -250,10 +250,13 @@ def test_scene_is_portable_and_does_not_use_vendor_fixed_hands() -> None:
     assert triangle_count < 200_000
 
 
-def test_teleop_registration_only_allows_realman_with_inspire(
+def test_teleop_registration_defaults_realman_to_inspire(
     spec: RealManRM75BInspireSpec,
 ) -> None:
     assert teleop_sim._normalize_hand("realman_rm75b", None) == "inspire"
     assert teleop_sim._ROBOT_HAND_SPECS[("realman_rm75b", "inspire")] == spec
+    # The L20 pair is opt-in and must not displace the Inspire default.
+    assert teleop_sim._normalize_hand("realman_rm75b", "linker_l20") == "linker_l20"
+    assert teleop_sim._ROBOT_HAND_SPECS[("realman_rm75b", "linker_l20")] != spec
     with pytest.raises(ValueError, match="does not support hand"):
-        teleop_sim._normalize_hand("realman_rm75b", "linker_l20")
+        teleop_sim._normalize_hand("galbot", "linker_l20")

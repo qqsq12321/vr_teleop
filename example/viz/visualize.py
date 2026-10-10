@@ -18,6 +18,9 @@ _SCENE_ALIASES = {
     "dexforce": "example/scene_config/scene_dexforce.xml",
     "galbot": "example/scene_config/scene_galbot_inspire.xml",
     "galbot_inspire": "example/scene_config/scene_galbot_inspire.xml",
+    "realman": "example/scene_config/scene_realman_rm75b_inspire.xml",
+    "realman_inspire": "example/scene_config/scene_realman_rm75b_inspire.xml",
+    "realman_l20": "example/scene_config/scene_realman_rm75b_l20.xml",
 }
 
 

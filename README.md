@@ -10,6 +10,8 @@
 | 命令 | 机器人 | 模式 | 说明 |
 |------|--------|------|------|
 | `teleop_sim.py` | DexForce 双臂 + 双手 | 仿真 | MuJoCo XML 场景，左右手控制双臂；手部重定向为 linker_l20 |
+| `teleop_sim.py --robot realman_rm75b` | RealMan RM75-B + Inspire RH56DFX | 仿真 | `--hand` 默认 inspire |
+| `teleop_sim.py --robot realman_rm75b --hand linker_l20` | RealMan RM75-B + Linker L20 | 仿真 | 仅仿真，无真机后端 |
 | `teleop_real.py` | RealMan RM75-B + Inspire RH56DFX | 实物 | 按 master 的 RM65 流程适配双臂七关节，先到初始姿态，再 Pico → IK → CANFD；无口令确认 |
 | `teleop_realman_real.py` | RealMan RM75-B + Inspire RH56DFX | 兼容调试入口 | 独立的旧检查/离线预览流程；日常真机入口不调用它 |
 
@@ -76,6 +78,46 @@ Ctrl+C / SDK 报错时尽力停两臂并断开；不自动取消手指目标，�
 `SafetySupervisor` 或模型碰撞检查；YAML 的 `safety` 与 `hands.rate_hz` 仅供旧调试入口使用。
 仿真入口不改动；真机只使用 MuJoCo 做 FK/IK，不启动仿真或查看器。
 详细说明见 [RealMan 真机使用说明](docs/realman_real.md)。
+
+## RealMan + Linker L20 仿真组合
+
+**仅仿真，没有对应真机后端。** 真机路径只支持 Inspire（见上文 `teleop_real.py`）。
+
+```bash
+conda activate vr_teleop
+python example/teleop_sim.py --robot realman_rm75b --hand linker_l20 \
+    --input-source avp --avp-ip <Vision Pro IP>
+```
+
+场景 `example/scene_config/scene_realman_rm75b_l20.xml` 由
+`tools/build_realman_rm75b_l20_scene.py` 生成：把 `assets/dex_hand/linker_l20/`
+下的 L20 手接到 `scene_realman_rm75b_inspire.xml` 的机械臂上，替换 Inspire。
+两份输入场景都已入库，所以重建**不需要** xacro 或厂商 ROS 包
+（这点和重建臂本体的 `build_realman_rm75b_assets.py` 不同）：
+
+```bash
+python tools/build_realman_rm75b_l20_scene.py --check
+```
+
+`--check` 校验两处：手部坐标系是否符合臂场景既有的 Inspire 约定
+（手指 -Y、食指→小指 +Z/-Z），以及初始姿态下有无自碰撞。
+
+与 Inspire 组合的差异：
+
+- **手部自由度 21 对 12。** L20 每只手 21 个关节，均带 position 执行器；
+  整个模型 `nq=nv=nu=58`（Inspire 版是 40）。重定向映射表与
+  `utils/robots/dexforce.py` 完全一致，因为两个场景内嵌的是同一份 L20 模型。
+- **`r_joint1` 减了 2π**（`3.96542297` → `-2.31776234` rad）。FK 逐位相同，
+  但原值超出模型 ±3.11 限位，会被 `--control-mode ctrl` 截断到 3.11，
+  导致右臂起始位姿和 `qpos` 模式不一致。
+- **`l_joint7`（腕滚转）改为 +75°**，使左手掌心朝下，与右手一致。
+  Inspire spec 的 -88.6° 会让左掌朝上——在 Inspire 场景里同样可复现，
+  不是 L20 带来的；该场景入库的 keyframe 早于那次 home 改动，掩盖了这一点。
+  J7 轴过 TCP site，所以只转掌心朝向，末端位置分毫不动。
+- **两手间距更小。** L20 比 Inspire 每侧长约 48mm，初始姿态下中指尖间距
+  0.172m（Inspire 为 0.249m）。实测无接触（`ncon=0`），但余量比 Inspire 小。
+- **手部几何是纯视觉的**（`contype=0 conaffinity=0`），和臂场景里的 Inspire 一致，
+  因此场景不会检测手指自碰撞。
 
 ## 前置条件
 
@@ -146,6 +188,9 @@ python example/teleop_sim.py --input-source quest3 --port 9000
 # DexForce 双臂 + 双手（仿真）
 python example/teleop_sim.py --input-source avp --avp-ip 192.168.5.32
 
+# RealMan RM75-B + Linker L20（仿真）
+python example/teleop_sim.py --robot realman_rm75b --hand linker_l20 \
+    --input-source avp --avp-ip 192.168.5.32
 ```
 
 ### Pico 4 relay 模式
@@ -196,8 +241,11 @@ python example/teleop_real.py --controller --ee gripper
 - `--ik-current-weight 0.1` — IK 当前姿态权重
 
 仿真专用:
-- `--scene path/to/scene.xml` — 覆盖默认场景（默认 `example/scene_config/scene_dexforce.xml`）
-- `--hand-config path/to/config.yaml` — 指定 linker_l20 手部重定向配置文件
+- `--robot dexforce|galbot|realman_rm75b` — 机器人本体（默认 dexforce）
+- `--hand inspire|linker_l20` — 末端灵巧手；默认 dexforce 配 linker_l20，galbot/realman_rm75b 配 inspire。
+  `realman_rm75b` 额外支持 `linker_l20`
+- `--scene path/to/scene.xml` — 覆盖默认场景（默认按 `--robot`/`--hand` 选择）
+- `--hand-config path/to/config.yaml` — 指定手部重定向配置文件
 
 实物专用:
 - `--dexforce-ip 192.168.1.50` — DexForce 机器人 IP
@@ -208,6 +256,7 @@ python example/teleop_real.py --controller --ee gripper
 ```bash
 # 可视化 MuJoCo 场景（无需 VR）
 python3 example/viz/visualize.py dexforce
+python3 example/viz/visualize.py realman_l20
 # 或直接指定 XML
 python3 example/viz/visualize.py example/scene_config/scene_dexforce.xml
 ```
