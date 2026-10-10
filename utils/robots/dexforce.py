@@ -76,6 +76,41 @@ class DexForceSpec:
     torso_home_qpos: tuple[float, ...] = ()
     head_home_qpos: tuple[float, ...] = ()
 
+    # -- Real robot (ROS 2 /control/joint_position) ------------------------
+    #
+    # Startup pose taken from the vendor's deployed robot_config, measured on
+    # hardware.  The simulation home above is a different, visualisation-only
+    # pose and must not be used to command the real arms.
+    real_arm_home_qpos: tuple[tuple[float, ...], tuple[float, ...]] = (
+        # left, right
+        (-0.3065, -0.7689, 0.5767, -1.5671, 0.4924, -0.1750, -0.0063),
+        (0.3065, 0.7689, -0.5767, 1.5671, -0.4924, 0.1750, 0.0063),
+    )
+    real_torso_home_qpos: tuple[float, ...] = (-0.6, 1.2, -0.6, 0.0)
+    real_head_home_qpos: tuple[float, ...] = (0.0, -0.5590)
+
+    def real_home_qpos(self, side: str) -> np.ndarray:
+        index = 0 if side == "left" else 1
+        return np.array(self.real_arm_home_qpos[index], dtype=np.float64)
+
+    def real_body_joint_names(self) -> tuple[str, ...]:
+        """Torso and head joints, in the order the driver expects them."""
+        return tuple(self.torso_joint_names) + tuple(self.head_joint_names)
+
+    def real_body_home_qpos(self) -> np.ndarray:
+        return np.array(
+            tuple(self.real_torso_home_qpos) + tuple(self.real_head_home_qpos),
+            dtype=np.float64,
+        )
+
+    def full_body_joint_names(self) -> tuple[str, ...]:
+        """All 20 joints in the order /control/joint_position receives them."""
+        return (
+            *self.arm_joint_names("right"),
+            *self.arm_joint_names("left"),
+            *self.real_body_joint_names(),
+        )
+
     def arm_joint_names(self, side: str) -> tuple[str, ...]:
         prefix = side.upper()
         return tuple(f"{prefix}_{s}" for s in self.arm_joint_suffixes)
