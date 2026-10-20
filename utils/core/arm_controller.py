@@ -210,6 +210,26 @@ class TeleopArmController:
             return True
         return False
 
+    def update_hand_from_pinch(
+        self,
+        pinch_distance_m: float | None,
+        *,
+        closed_m: float = 0.02,
+        open_m: float = 0.10,
+    ) -> bool:
+        """Drive a single-DOF parallel gripper joint from a VR pinch distance.
+
+        No-ops for any robot whose "hand" is not exactly one joint (i.e. every
+        dexterous hand driven by AnyDexRetarget instead), so this is safe to
+        call unconditionally alongside update_hand_from_mediapipe/raw_landmarks.
+        """
+        if pinch_distance_m is None or len(self.hand_dof_indices) != 1:
+            return False
+        lo, hi = self.model.jnt_range[self.hand_joint_ids[0]]
+        t = np.clip((pinch_distance_m - closed_m) / (open_m - closed_m), 0.0, 1.0)
+        self.latest_hand_qpos = np.array([lo + t * (hi - lo)], dtype=np.float64)
+        return True
+
     def mapped_hand_qpos(self) -> np.ndarray | None:
         if self.latest_hand_qpos is None:
             return None

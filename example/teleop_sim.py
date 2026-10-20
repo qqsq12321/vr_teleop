@@ -9,6 +9,7 @@ Examples:
     python example/teleop_sim.py --port 9000
     python example/teleop_sim.py --robot galbot --hand inspire --port 9000
     python example/teleop_sim.py --robot realman_rm75b --input-source pico4
+    python example/teleop_sim.py --robot cvte --input-source avp
     python example/teleop_sim.py --input-source avp --avp-ip 192.168.1.100
     python example/teleop_sim.py --input-source pico4
 """
@@ -34,6 +35,7 @@ from utils.core.input_stream import TeleopInputStream
 from utils.core.quaternion import (
     transform_vr_to_robot_pose,
 )
+from utils.robots.cvte_carm_d3 import CVTECArmD3Spec
 from utils.robots.dexforce import DexForceSpec
 from utils.robots.galbot import GalbotInspireSpec
 from utils.robots.realman_rm75b import RealManRM75BInspireSpec
@@ -47,24 +49,28 @@ _DEXFORCE_SPEC = DexForceSpec()
 _GALBOT_SPEC = GalbotInspireSpec()
 _REALMAN_RM75B_SPEC = RealManRM75BInspireSpec()
 _REALMAN_RM75B_L20_SPEC = RealManRM75BL20Spec()
+_CVTE_CARM_D3_SPEC = CVTECArmD3Spec()
 
 
 _DEFAULT_HANDS = {
     "dexforce": "linker_l20",
     "galbot": "inspire",
     "realman_rm75b": "inspire",
+    "cvte": "gripper",
 }
 _HAND_ALIASES = {
     "inspire": "inspire",
     "inspire_rh56dfx": "inspire",
     "linker": "linker_l20",
     "linker_l20": "linker_l20",
+    "gripper": "gripper",
 }
 _ROBOT_HAND_SPECS = {
     ("dexforce", "linker_l20"): _DEXFORCE_SPEC,
     ("galbot", "inspire"): _GALBOT_SPEC,
     ("realman_rm75b", "inspire"): _REALMAN_RM75B_SPEC,
     ("realman_rm75b", "linker_l20"): _REALMAN_RM75B_L20_SPEC,
+    ("cvte", "gripper"): _CVTE_CARM_D3_SPEC,
 }
 
 
@@ -363,16 +369,17 @@ def main() -> None:
         "--robot",
         default="dexforce",
         choices=sorted(_DEFAULT_HANDS),
-        help="Robot body to teleoperate: dexforce (default), galbot, or realman_rm75b.",
+        help="Robot body to teleoperate: dexforce (default), galbot, realman_rm75b, or cvte (CVTE CARM D3).",
     )
     parser.add_argument(
         "--hand",
         default=None,
         choices=sorted(_HAND_ALIASES),
         help=(
-            "Dexterous hand/end-effector: defaults to linker_l20 for dexforce "
-            "and inspire for galbot/realman_rm75b. realman_rm75b also accepts "
-            "linker_l20."
+            "Dexterous hand/end-effector: defaults to linker_l20 for dexforce, "
+            "inspire for galbot/realman_rm75b, and gripper for cvte "
+            "(a single-DOF parallel gripper driven by VR pinch distance, not "
+            "AnyDexRetarget). realman_rm75b also accepts linker_l20."
         ),
     )
     parser.add_argument(
@@ -407,8 +414,8 @@ def main() -> None:
     parser.add_argument(
         "--position-scale",
         type=float,
-        default=3.0,
-        help="Scale for wrist position residuals.",
+        default=1.0,
+        help="Scale for wrist position residuals (1.0 = 1:1 hand-to-robot translation).",
     )
     parser.add_argument(
         "--ema-alpha",

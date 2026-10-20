@@ -14,6 +14,8 @@
 | `teleop_sim.py --robot realman_rm75b --hand linker_l20` | RealMan RM75-B + Linker L20 | 仿真 | 仅仿真，无真机后端 |
 | `teleop_real.py` | RealMan RM75-B + Inspire RH56DFX | 实物 | 按 master 的 RM65 流程适配双臂七关节，先到初始姿态，再 Pico → IK → CANFD；无口令确认 |
 | `teleop_realman_real.py` | RealMan RM75-B + Inspire RH56DFX | 兼容调试入口 | 独立的旧检查/离线预览流程；日常真机入口不调用它 |
+| `teleop_sim.py --robot cvte` | CVTE CARM D3 双臂 + 平行夹爪 | 仿真 | 捏合距离控制夹爪开合 |
+| `teleop_cvte_real.py` | CVTE CARM D3 双臂 + 平行夹爪 | 实物 | 官方 `carm` SDK（WebSocket）→ IK → `track_*_joint`；默认从当前姿态开始 |
 
 ## RealMan + Inspire 真机入口
 
@@ -119,6 +121,83 @@ python tools/build_realman_rm75b_l20_scene.py --check
 - **手部几何是纯视觉的**（`contype=0 conaffinity=0`），和臂场景里的 Inspire 一致，
   因此场景不会检测手指自碰撞。
 
+## CVTE CARM D3 双臂（仿真 + 真机）
+
+固定基座的七轴人形双臂（每臂 7 关节）+ 每侧一个单自由度平行夹爪，无躯干/头部。
+URDF 来自厂商 `carm_d3` 包，产品资料见厂商手册与 [carm_demo](https://github.com/cvte-robotics/carm_demo)。
+
+### 仿真
+
+```bash
+conda activate vr_teleop
+python example/teleop_sim.py --robot cvte --input-source avp --avp-ip <Vision Pro IP>
+python example/teleop_sim.py --robot cvte --input-source pico4          # Pico relay，需先开 daemon
+python example/viz/visualize.py cvte                                     # 只看模型
+```
+
+- 初始姿态：大臂下垂、肘部 90°、小臂和夹爪朝前（`utils/robots/cvte_carm_d3.py` 的 `ARM_HOME_QPOS`）。
+- 夹爪由拇指-食指捏合距离控制：`0.02m` 全闭，`0.10m` 全开（`TeleopArmController.update_hand_from_pinch`，
+  只对单自由度夹爪生效，灵巧手机器人不受影响）。
+- 场景 `example/scene_config/scene_cvte_carm_d3.xml` 由 `tools/build_cvte_carm_d3_scene.py` 从
+  `assets/arm_body/cvte_carm_d3/source/urdf/carm_d3.urdf` 生成；URDF 的 `<mimic>` 夹爪联动由场景里的
+  `<equality>` 补上（MuJoCo 导入 URDF 时不会转换 mimic）。细节见 `assets/arm_body/cvte_carm_d3/README.md`。
+
+### 真机
+
+前置：
+- 安装官方 SDK 到 `vr_teleop` 环境：`pip install carm`（纯 Python，依赖 `websocket-client`、`zeroconf`）。
+- 控制器默认 IP `10.42.0.101`，PC 网口需配 `10.42.0.x`，例如
+  `sudo ip addr add 10.42.0.201/24 dev <网口>`；能打开 `http://10.42.0.101` 网页上位机即为连通。
+- 急停按钮必须接上才能上电。
+
+推荐上手顺序：
+
+```bash
+conda activate vr_teleop
+
+# 1. 只读检查：不使能伺服、不下发任何指令；打印关节、夹爪、FK 与控制器法兰位姿对比
+python example/teleop_cvte_real.py --read-only --report
+
+# 2. 移到初始姿态后退出（不连 VR）
+python example/teleop_cvte_real.py --home-only
+
+# 3. 单臂遥操，再双臂
+python example/teleop_cvte_real.py --arm left --input-source avp --avp-ip <Vision Pro IP>
+python example/teleop_cvte_real.py --input-source avp --avp-ip <Vision Pro IP>
+python example/teleop_cvte_real.py --input-source pico4                  # Pico relay
+```
+
+行为说明：
+- 默认**从机械臂当前姿态**开始遥操；`--home` 先在 `--home-duration`（默认 6s）内平滑移到初始姿态。
+  零位（双臂垂直）是奇异位形，建议先 `--home`。
+- 启动运动时调用 SDK `set_ready()`（清错、伺服使能、位置模式），两臂都会使能。
+- 关节角原样下发，无偏移/符号转换：厂商 `joints_bind.json` 一一对应，且已在实物上用 `--report`
+  验证模型 FK 与控制器法兰位姿相差约 1.5–1.8 mm。
+- 回 home 不用 SDK 的定时 `move_*_joint`：该控制器（固件 1.0.260819）拒绝其 `TASK_PVT` 任务，
+  因此 home 和遥操共用同一条 `track_*_joint` 流式通道。
+- 夹爪：仅当控制器报告末端为 `gripper`（`get_*_eeff_type`）时启用捏合控制，开口度映射到控制器的
+  `eeff_lower..eeff_upper`（米）。末端为 `flange` 时只控制手臂；装夹爪后需在网页上位机切换工具并重启。
+- **D3 关节没有抱闸**：伺服下使能、硬件急停或断电都会使手臂下坠。程序退出时只调用 `task_stop()`，
+  伺服保持使能、手臂停在原位；程序永不调用 `set_servo_enable(False)` / `emergency_stop()`。
+- 停止：`Ctrl+C`，或 AVP 左手握拳 3 秒。
+
+安全保护（任何一项触发即停止并退出）：关节反馈超过 `--feedback-timeout`（0.5s）未更新、控制器报错
+（3001 警告除外）、实测关节持续偏离指令（0.3 rad 超过 0.5s）。指令始终限制在关节限位内
+（`--joint-margin` 0.05 rad）并按 `--max-joint-speed`（1 rad/s）限速。VR 超过 0.25s 无新数据时停止下发，手臂保持原位。
+
+手感参数（默认值）：
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| `--position-scale` | 1.0 | 手腕平移 1:1 映射到夹爪 |
+| `--position-deadband` / `--rotation-deadband` | 0 / 0 | 死区，0 表示关闭（与仿真一致） |
+| `--pos-gain` / `--rot-gain` | 0.3 / 0.3 | 每帧向目标走的比例，90% 跟上约 0.13s；1 = 不平滑 |
+| `--ema-alpha` | 0.8 | 腕部平移 EMA |
+| `--publish-hz` | 50 | 下发频率 |
+
+运行时每秒打印诊断：手部位移、IK 目标位移、实测夹爪位移（cm），以及每个关节"上一帧指令 − 实测"（度）。
+可加 `--viewer` 打开只读 MuJoCo 窗口显示实测姿态。
+
 ## 前置条件
 
 ### VR 端（任选其一）
@@ -158,6 +237,7 @@ git submodule update --init --recursive
 
 - **Apple Vision Pro 输入**: `avp-stream>=2.50.0` (`pip install avp-stream`)
 - **DexForce 实物后端**: `utils/adapters/output/dexforce_real.py` 仍是未接 SDK 的占位实现；`teleop_real.py` 已改用于 RealMan。
+- **CVTE CARM D3 实物**: `carm`（`pip install carm`），装在 `vr_teleop` 环境；仿真和单元测试不需要它。
 
 ## 运行命令
 
@@ -215,6 +295,10 @@ python example/teleop_real.py --controller --ee gripper
 
 停止 daemon：在终端 1 按 `Ctrl+C`。
 
+`pico4_daemon.py` 与 C++ 版 `pico_relay_daemon` 使用同一组端口（TCP 63901/63902），只能运行其中一个；
+任一个在运行时，`--pico4-mode relay` 都能直接使用。启动报 `address already in use` 时，用
+`ss -ltnp | grep -E ':(63901|63902)\b'` 或 `ps aux | grep pico` 找到已在运行的那个。
+
 停止方式说明：
 
 - RealMan 真机使用 `Ctrl+C` 或手柄 menu 键；SDK 报错会退出并尽力停止两臂。无有效 getter 结果超过 250ms 仅跳过臂下发，恢复后继续；缓存及手指目标行为见上文。
@@ -234,16 +318,16 @@ python example/teleop_real.py --controller --ee gripper
 
 通用:
 - `--port 9000` — Quest 3 UDP 端口
-- `--position-scale` — 手腕位移映射倍率（默认 3.0）
+- `--position-scale` — 手腕位移映射倍率（默认 1.0，即 1:1）
 - `--ema-alpha 0.8` — EMA 平滑系数
 - `--rot-weight 1.0` — IK 旋转权重
 - `--ik-damping 0.001` — IK 阻尼系数
 - `--ik-current-weight 0.1` — IK 当前姿态权重
 
 仿真专用:
-- `--robot dexforce|galbot|realman_rm75b` — 机器人本体（默认 dexforce）
-- `--hand inspire|linker_l20` — 末端灵巧手；默认 dexforce 配 linker_l20，galbot/realman_rm75b 配 inspire。
-  `realman_rm75b` 额外支持 `linker_l20`
+- `--robot dexforce|galbot|realman_rm75b|cvte` — 机器人本体（默认 dexforce）
+- `--hand inspire|linker_l20|gripper` — 末端执行器；默认 dexforce 配 linker_l20，galbot/realman_rm75b 配 inspire，
+  cvte 配 gripper（单自由度平行夹爪，由捏合距离驱动）。`realman_rm75b` 额外支持 `linker_l20`
 - `--scene path/to/scene.xml` — 覆盖默认场景（默认按 `--robot`/`--hand` 选择）
 - `--hand-config path/to/config.yaml` — 指定手部重定向配置文件
 
@@ -257,6 +341,7 @@ python example/teleop_real.py --controller --ee gripper
 # 可视化 MuJoCo 场景（无需 VR）
 python3 example/viz/visualize.py dexforce
 python3 example/viz/visualize.py realman_l20
+python3 example/viz/visualize.py cvte
 # 或直接指定 XML
 python3 example/viz/visualize.py example/scene_config/scene_dexforce.xml
 ```
@@ -281,16 +366,20 @@ vr_teleop/
 │   │   │   └── pico4.py
 │   │   └── output/
 │   │       ├── mujoco_sim.py
-│   │       └── dexforce_real.py
+│   │       ├── dexforce_real.py
+│   │       └── cvte_real.py       # CVTE D3 carm SDK 适配（限位、限速、故障锁存）
 │   └── robots/
-│       └── dexforce.py            # DexForce 关节映射、home pose、配置路径
+│       ├── dexforce.py            # DexForce 关节映射、home pose、配置路径
+│       └── cvte_carm_d3.py        # CVTE D3 关节名、home pose、控制器 IP
 ├── assets/                      # 机器人/物体模型资产
 │   ├── arm_body/dexforce/          # DexForce 本体 mesh、贴图、URDF
+│   ├── arm_body/cvte_carm_d3/      # CVTE D3 厂商 URDF + STL
 │   ├── dex_hand/linker_l20/        # linker_l20 手部 URDF/MJCF、visual/collision mesh
 │   └── objects/                    # 示例物体 mesh 和预览图
 ├── example/                     # 遥操作入口和示例配置
 │   ├── teleop_sim.py
 │   ├── teleop_real.py
+│   ├── teleop_cvte_real.py         # CVTE D3 真机入口
 │   ├── scene_config/               # MuJoCo XML 场景配置
 │   └── viz/visualize.py            # MuJoCo 场景查看器
 ├── third_party/                 # 第三方依赖

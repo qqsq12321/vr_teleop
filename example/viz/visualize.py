@@ -21,6 +21,8 @@ _SCENE_ALIASES = {
     "realman": "example/scene_config/scene_realman_rm75b_inspire.xml",
     "realman_inspire": "example/scene_config/scene_realman_rm75b_inspire.xml",
     "realman_l20": "example/scene_config/scene_realman_rm75b_l20.xml",
+    "cvte": "example/scene_config/scene_cvte_carm_d3.xml",
+    "cvte_carm_d3": "example/scene_config/scene_cvte_carm_d3.xml",
 }
 
 

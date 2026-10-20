@@ -11,6 +11,7 @@ from utils.adapters.input.quest3 import (
     parse_left_wrist_pose,
     parse_right_landmarks,
     parse_right_wrist_pose,
+    pinch_distance_from_landmarks,
 )
 
 
@@ -61,6 +62,8 @@ class TeleopInputStream:
             for arm, side in ((left_arm, "left"), (right_arm, "right")):
                 if arm.update_hand_from_mediapipe(self.avp_input.get_landmarks_mediapipe(side)):
                     result.saw_valid_data = True
+                if arm.update_hand_from_pinch(self.avp_input.get_pinch_distance(side)):
+                    result.saw_valid_data = True
                 wrist = self.avp_input.get_wrist_pose(side)
                 if wrist is not None:
                     arm.update_from_pose(*wrist)
@@ -70,6 +73,8 @@ class TeleopInputStream:
         if self.pico4_input is not None:
             for arm, side in ((left_arm, "left"), (right_arm, "right")):
                 if arm.update_hand_from_mediapipe(self.pico4_input.get_landmarks_mediapipe(side)):
+                    result.saw_valid_data = True
+                if arm.update_hand_from_pinch(self.pico4_input.get_pinch_distance(side)):
                     result.saw_valid_data = True
                 wrist = self.pico4_input.get_wrist_pose(side)
                 if wrist is not None:
@@ -84,6 +89,10 @@ class TeleopInputStream:
         for arm, side in ((left_arm, "left"), (right_arm, "right")):
             landmarks = parse_left_landmarks(message) if side == "left" else parse_right_landmarks(message)
             if arm.update_hand_from_raw_landmarks(landmarks):
+                result.saw_valid_data = True
+            if arm.update_hand_from_pinch(
+                pinch_distance_from_landmarks(landmarks) if landmarks is not None else None
+            ):
                 result.saw_valid_data = True
             wrist_pose = parse_left_wrist_pose(message) if side == "left" else parse_right_wrist_pose(message)
             if wrist_pose is not None:

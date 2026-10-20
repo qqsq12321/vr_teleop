@@ -47,6 +47,7 @@ class WristTracker:
         self.target_position: np.ndarray = self._initial_site_pos.copy()
         self.target_quaternion: np.ndarray = self._initial_site_quat.copy()
         self.residual: np.ndarray | None = None
+        self.raw_residual: np.ndarray | None = None
         self.euler_residual: tuple | None = None
 
     @property
@@ -114,6 +115,7 @@ class WristTracker:
         )
         if self._base_xmat is not None:
             residual = self._base_xmat @ residual
+        self.raw_residual = residual  # Before smoothing/deadband, for diagnostics.
 
         # EMA smoothing
         if self._smoothed_residual is None:
