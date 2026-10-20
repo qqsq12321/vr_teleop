@@ -94,3 +94,18 @@ def test_relay_preserves_partial_header_and_payload(split):
     assert parser.try_parse() == payload
     assert parser.try_parse() == payload
     assert parser.try_parse() is None
+
+
+def test_sim_head_pose_getter_exists_and_validates():
+    """Regression: a lost ``def`` line left get_head_pose as dead code, crashing
+    every ``teleop_sim.py --input-source pico4`` run on the first frame."""
+    from utils.adapters.input.pico4 import Pico4 as SimPico4
+
+    pico = SimPico4.__new__(SimPico4)
+    pico._lock = threading.Lock()
+    pico._head_pose = None
+    assert pico.get_head_pose() is None
+    pico._head_pose = np.zeros(7)
+    assert pico.get_head_pose() is None  # Placeholder origin pose is rejected.
+    pico._head_pose = np.array([0.1, 1.6, 0.2, 0.0, 0.0, 0.0, 1.0])
+    np.testing.assert_allclose(pico.get_head_pose(), pico._head_pose)

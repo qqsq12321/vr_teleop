@@ -180,3 +180,10 @@ def test_cvte_registered_in_teleop_sim_cli(monkeypatch) -> None:
 
     assert captured["robot"] == "cvte"
     assert captured["hand"] == "gripper"
+
+
+def test_cvte_gripper_never_loads_a_retarget_config(spec: CVTECArmD3Spec) -> None:
+    args = SimpleNamespace(hand_config=None, input_source="pico4")
+    for side in ("left", "right"):
+        assert spec.hand_config_path("pico4", side) is None
+        assert teleop_sim._resolve_hand_config(args, spec, side) is None

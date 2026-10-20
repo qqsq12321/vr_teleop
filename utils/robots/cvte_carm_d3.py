@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_SCENE = ROOT_DIR / "example" / "scene_config" / "scene_cvte_carm_d3.xml"
-ANYDEX_ADAPTIVE_CONFIG_DIR = ROOT_DIR / "third_party" / "AnyDexRetarget" / "example" / "config" / "adaptive"
 
 # Upper arms hang down, elbows bent 90 deg so forearms and grippers point
 # forward (+X). Same values for both sides: joint1/joint4 share the +Y axis on
@@ -62,12 +61,11 @@ class CVTECArmD3Spec:
         del side
         return np.asarray(ARM_HOME_QPOS, dtype=np.float64)
 
-    def hand_config_path(self, input_source: str, side: str) -> Path:
-        # No AnyDexRetarget config exists for this single-DOF gripper; the
-        # gripper is instead driven by TeleopArmController.update_hand_from_pinch.
-        # HandRetargeter disables itself gracefully when this path is missing.
-        del input_source
-        return ANYDEX_ADAPTIVE_CONFIG_DIR / "cvte_gripper" / f"cvte_gripper_{side}.yaml"
+    def hand_config_path(self, input_source: str, side: str) -> None:
+        # The single-DOF gripper is not retargeted by AnyDexRetarget; it is
+        # driven by TeleopArmController.update_hand_from_pinch instead.
+        del input_source, side
+        return None
 
     def apply_head_torso(
         self,

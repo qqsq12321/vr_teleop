@@ -531,6 +531,7 @@ class Pico4:
             result['pose'] = state['pose'].copy()
             return result
 
+    def get_head_pose(self) -> Optional[np.ndarray]:
         """Return HMD pose as [x, y, z, qx, qy, qz, qw] in Pico frame, or None."""
         with self._lock:
             pose = self._head_pose.copy() if self._head_pose is not None else None

@@ -89,11 +89,12 @@ def _normalize_hand(robot: str, hand: str | None) -> str:
     return normalized
 
 
-def _resolve_hand_config(args: argparse.Namespace, spec, side: str = "right") -> str:
-    """Resolve the retarget config path for the given robot/input source/side."""
+def _resolve_hand_config(args: argparse.Namespace, spec, side: str = "right") -> str | None:
+    """Resolve the retarget config path; None when the end effector is not retargeted."""
     if args.hand_config:
         return args.hand_config
-    return str(spec.hand_config_path(args.input_source, side=side))
+    path = spec.hand_config_path(args.input_source, side=side)
+    return None if path is None else str(path)
 
 
 def _robot_label(args: argparse.Namespace) -> str:
