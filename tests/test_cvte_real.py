@@ -174,29 +174,17 @@ def test_read_only_session_rejects_every_motion_call(model):
     assert ("disconnect", ()) in bot.calls
 
 
-def test_send_joints_clamps_to_limits_and_rate_limits_from_measured_pose(model):
-    clock = FakeClock()
-    output, bot = _output(model, clock=clock, max_joint_speed_rad_s=1.0, joint_margin_rad=0.05)
+def test_send_joints_clamps_to_limits(model):
+    output, bot = _output(model, joint_margin_rad=0.05)
     output.enable_motion()
     home = SPEC.arm_home_qpos("left")
 
-    # First command steps from the measured pose: at most 1 rad/s * 0.05 s.
+    # Commands are clamped to limits.
     sent = output.send_joints("left", home + 1.0)
-    np.testing.assert_allclose(sent, home + 0.05)
-
-    clock.now += 0.02
-    sent = output.send_joints("left", home + 1.0)
-    np.testing.assert_allclose(sent, home + 0.07)
-
-    # A long pause never lets one command cover more than the 0.05 s window.
-    clock.now += 5.0
-    sent = output.send_joints("left", home + 1.0)
-    np.testing.assert_allclose(sent, home + 0.12)
+    assert np.all(sent <= output.limits("left")[:, 1])
 
     # Limits (minus margin) win over the target, e.g. left J2 lower bound -15 deg.
-    for _ in range(200):
-        clock.now += 0.05
-        sent = output.send_joints("left", np.full(7, -10.0))
+    sent = output.send_joints("left", np.full(7, -10.0))
     assert sent[1] == pytest.approx(np.radians(-15) + 0.05, abs=1e-5)  # Scene stores 6 digits.
     assert np.all(sent >= output.limits("left")[:, 0] - 1e-12)
     name, (targets, eeff) = bot.calls[-1]
@@ -242,18 +230,17 @@ def test_controller_error_latches_and_warnings_do_not(model):
         output.send_joints("left", SPEC.arm_home_qpos("left"))
 
 
-def test_persistent_tracking_error_latches_a_fault(model):
-    clock = FakeClock()
-    output, bot = _output(model, clock=clock, tracking_error_rad=0.3, tracking_error_grace_s=0.5)
+def test_check_tracking_returns_error_without_latching(model):
+    output, bot = _output(model)
     output.enable_motion()
     output.send_joints("left", SPEC.arm_home_qpos("left"))
     bot.q["left"] = SPEC.arm_home_qpos("left") + 0.5  # Arm blocked away from the command.
     bot.push()
+    # Returns error but does not raise or latch fault.
     assert output.check_tracking("left") == pytest.approx(0.5)
-    clock.now += 0.6
-    bot.push()
-    with pytest.raises(CVTEError, match="tracking error"):
-        output.check_tracking("left")
+    assert output.fault is None
+    # Next command should still work.
+    output.send_joints("left", SPEC.arm_home_qpos("left"))
 
 
 def test_close_after_motion_stops_task_but_keeps_servos(model):

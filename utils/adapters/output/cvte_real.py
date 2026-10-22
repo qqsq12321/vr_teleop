@@ -27,8 +27,6 @@ SIDES = ("left", "right")
 DOF = 7
 # SDK error code that only reports a warning (carm_dual_bot_demo.on_carm_error).
 WARNING_CODE = 3001
-# Rate-limit window: after a pause, never let one command cover more than this.
-MAX_STEP_DT_S = 0.05
 
 
 class CVTEError(RuntimeError):
@@ -65,10 +63,7 @@ class CVTERealOutput:
         clock: Callable[[], float] = time.monotonic,
         connect_timeout_s: float = 5.0,
         feedback_timeout_s: float = 0.5,
-        joint_margin_rad: float = 0.05,
-        max_joint_speed_rad_s: float = 1.0,
-        tracking_error_rad: float = 0.3,
-        tracking_error_grace_s: float = 0.5,
+        joint_margin_rad: float = 0.01,
     ):
         selected = tuple(dict.fromkeys(str(side).lower() for side in sides))
         if not selected or any(side not in SIDES for side in selected):
@@ -76,9 +71,6 @@ class CVTERealOutput:
         for name, value in (
             ("connect_timeout_s", connect_timeout_s),
             ("feedback_timeout_s", feedback_timeout_s),
-            ("max_joint_speed_rad_s", max_joint_speed_rad_s),
-            ("tracking_error_rad", tracking_error_rad),
-            ("tracking_error_grace_s", tracking_error_grace_s),
         ):
             if not np.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
@@ -91,9 +83,6 @@ class CVTERealOutput:
         self.connect_timeout_s = float(connect_timeout_s)
         self.feedback_timeout_s = float(feedback_timeout_s)
         self.joint_margin_rad = float(joint_margin_rad)
-        self.max_joint_speed_rad_s = float(max_joint_speed_rad_s)
-        self.tracking_error_rad = float(tracking_error_rad)
-        self.tracking_error_grace_s = float(tracking_error_grace_s)
         self._factory = factory
         self._bot = None
         self._lock = threading.RLock()
@@ -102,7 +91,6 @@ class CVTERealOutput:
         self._controller_limits: dict[str, np.ndarray] = {}
         self._eeff_config: dict[str, dict] = {}
         self._last_command: dict[str, tuple[np.ndarray, float]] = {}
-        self._error_since: dict[str, float] = {}
         self._motion_enabled = False
         self._fault: str | None = None
         self.commands_sent = 0
@@ -288,22 +276,12 @@ class CVTERealOutput:
             self._motion_enabled = True
 
     def send_joints(self, side: str, q_rad, *, gripper_m: float | None = None) -> np.ndarray:
-        """Stream a joint target (clamped + rate-limited); returns what was sent."""
+        """Stream a joint target (clamped to limits); returns what was sent."""
         q = _joints(q_rad, f"{side} target")
         with self._lock:
             self._require_motion(side)
-            now = self.clock()
-            if side in self._last_command:
-                reference, sent_at = self._last_command[side]
-                dt = min(max(now - sent_at, 0.0), MAX_STEP_DT_S)
-            else:
-                # First command of a session: step from the measured pose,
-                # never from a stale or assumed one.
-                reference, dt = self.read_arm_positions(side), MAX_STEP_DT_S
             limits = self._limits[side]
             q = np.clip(q, limits[:, 0], limits[:, 1])
-            step = self.max_joint_speed_rad_s * dt
-            q = np.clip(q, reference - step, reference + step)
             eeff = -1.0
             if gripper_m is not None:
                 lower, upper = self.gripper_range(side)
@@ -312,7 +290,7 @@ class CVTERealOutput:
             if result != 1:
                 self._fault = self._fault or f"{side}: track_{side}_joint returned {result}"
                 raise CVTEError(self._fault)
-            self._last_command[side] = (q.copy(), now)
+            self._last_command[side] = (q.copy(), self.clock())
             self.commands_sent += 1
             return q
 
@@ -322,23 +300,12 @@ class CVTERealOutput:
             return None if sample is None else sample[0].copy()
 
     def check_tracking(self, side: str) -> float:
-        """Latch a fault if the arm stays far from its last command (blocked/collision)."""
+        """Return tracking error without latching faults (monitoring only)."""
         with self._lock:
             if side not in self._last_command:
                 return 0.0
             measured = self.read_arm_positions(side)
             error = float(np.max(np.abs(measured - self._last_command[side][0])))
-            now = self.clock()
-            if error > self.tracking_error_rad:
-                since = self._error_since.setdefault(side, now)
-                if now - since >= self.tracking_error_grace_s:
-                    self._fault = self._fault or (
-                        f"{side}: joint tracking error {error:.3f} rad for {now - since:.2f}s "
-                        f"(limit {self.tracking_error_rad:.3f} rad)"
-                    )
-                    raise CVTEError(self._fault)
-            else:
-                self._error_since.pop(side, None)
             return error
 
     def stop(self) -> None:

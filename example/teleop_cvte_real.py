@@ -226,7 +226,6 @@ def run(args, *, output_factory=CVTERealOutput, input_factory=None, viewer_facto
         read_only=args.read_only,
         feedback_timeout_s=args.feedback_timeout,
         joint_margin_rad=args.joint_margin,
-        max_joint_speed_rad_s=args.max_joint_speed,
     )
     input_stream = None
     viewer = None
@@ -286,8 +285,7 @@ def run(args, *, output_factory=CVTERealOutput, input_factory=None, viewer_facto
         input_stream = input_factory(args)
 
         mode = "READ-ONLY (no commands are sent)" if args.read_only else "MOTION ENABLED"
-        print(f"{mode}; arm={args.arm}; grippers={list(gripper_sides) or 'off'}; "
-              f"max joint speed {args.max_joint_speed:.2f} rad/s", flush=True)
+        print(f"{mode}; arm={args.arm}; grippers={list(gripper_sides) or 'off'}", flush=True)
         print("First wrist frame aligns to the current pose. Left fist 3s (AVP) or Ctrl+C stops.", flush=True)
 
         # Gripper position at teleop start, for the hand/target/measured log.
@@ -395,9 +393,7 @@ def _parse_args(argv=None) -> argparse.Namespace:
                         help="Exit automatically after this many seconds (0 = run until stopped)")
 
     parser.add_argument("--publish-hz", type=float, default=50.0)
-    parser.add_argument("--max-joint-speed", type=float, default=1.0,
-                        help="Per-joint command rate limit in rad/s (hardware max 3.14)")
-    parser.add_argument("--joint-margin", type=float, default=0.05,
+    parser.add_argument("--joint-margin", type=float, default=0.01,
                         help="Keep commands this far inside the joint limits (radians)")
     parser.add_argument("--feedback-timeout", type=float, default=0.5,
                         help="Seconds without joint feedback before the session stops")
@@ -431,7 +427,7 @@ def _parse_args(argv=None) -> argparse.Namespace:
         args.home = True
     if args.read_only and args.home:
         parser.error("--home/--home-only move the arms and cannot be combined with --read-only")
-    for name in ("publish_hz", "max_joint_speed", "feedback_timeout", "state_timeout", "home_duration"):
+    for name in ("publish_hz", "feedback_timeout", "state_timeout", "home_duration"):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
             parser.error(f"--{name.replace('_', '-')} must be positive")
     for name in ("position_deadband", "rotation_deadband"):
@@ -440,8 +436,6 @@ def _parse_args(argv=None) -> argparse.Namespace:
     for name in ("pos_gain", "rot_gain"):
         if not 0 < getattr(args, name) <= 1:
             parser.error(f"--{name.replace('_', '-')} must be in (0, 1]")
-    if args.max_joint_speed > np.pi:
-        parser.error("--max-joint-speed exceeds the hardware joint speed (3.14 rad/s)")
     return args
 
 
