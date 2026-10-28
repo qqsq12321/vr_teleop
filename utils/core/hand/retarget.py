@@ -66,6 +66,13 @@ class HandRetargeter:
     def available(self) -> bool:
         return self._retargeter is not None
 
+    @property
+    def joint_names(self) -> tuple[str, ...]:
+        """Return the AnyDex output joint order used by a real-hand backend."""
+        if self._retargeter is None:
+            return ()
+        return tuple(str(name) for name in self._retargeter.optimizer.robot.dof_joint_names)
+
     def retarget(self, raw_landmarks: list[float]) -> np.ndarray | None:
         """63 floats (Unity LH) -> joint angles, or None if invalid."""
         if self._retargeter is None:

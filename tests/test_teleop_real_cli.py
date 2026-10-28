@@ -212,11 +212,13 @@ def test_real_ik_reaches_fake_sdk_and_reads_feedback_only_at_start(fake_rig, sid
         assert len(sent) == r.cycles
         np.testing.assert_allclose(sent[0], r.sdk_angles(s, r.initial[s]), atol=1e-12)
         assert np.max(np.abs(sent[-1] - sent[0])) > .01
-    assert [(e[1], e[2]) for e in r.events if e[0] == 'read'] == [(0, 'left'), (0, 'right')] * 2
+    assert [(e[1], e[2]) for e in r.events if e[0] == 'read'] == [
+        (0, selected_side) for _ in range(2) for selected_side in r.sides
+    ]
     assert [e[2] for e in r.events if e[0] == 'home'] == list(r.sides)
     startup = [e[0] for e in r.events[:next(i for i, e in enumerate(r.events) if e[0] == 'move')]]
-    assert startup == ['read', 'read'] + ['home', 'home-done'] * len(r.sides) + ['read', 'read', 'pico-start']
-    assert {e[2] for e in r.events if e[0] == 'stop'} == {'left', 'right'}
+    assert startup == ['read'] * len(r.sides) + ['home', 'home-done'] * len(r.sides) + ['read'] * len(r.sides) + ['pico-start']
+    assert {e[2] for e in r.events if e[0] == 'stop'} == set(r.sides)
     assert not any(e[0] == 'hand' for e in r.events)
     assert r.events[-1][0] == 'pico-stop'
 
@@ -267,7 +269,7 @@ def test_sdk_error_stops_both_without_retry(fake_rig):
     r.fail_sdk = True
     with pytest.raises(RealManError, match='SDK returned 9'): r.run()
     assert len([e for e in r.events if e[0] == 'move']) == 1
-    assert {e[2] for e in r.events if e[0] == 'stop'} == {'left', 'right'}
+    assert {e[2] for e in r.events if e[0] == 'stop'} == set(r.sides)
 
 
 def test_failed_startup_feedback_sends_no_actuator_commands(fake_rig):
@@ -287,7 +289,7 @@ def test_failed_initial_pose_does_not_start_teleop_or_hands(fake_rig, side):
         r.run(hands=True)
     assert [e[2] for e in r.events if e[0] == 'home'] == (['left'] if side == 'left' else ['left', 'right'])
     assert not any(e[0] in ('move', 'hand', 'pico-start') for e in r.events)
-    assert {e[2] for e in r.events if e[0] == 'stop'} == {'left', 'right'}
+    assert {e[2] for e in r.events if e[0] == 'stop'} == set(r.sides)
     assert r.events[-1][0] == 'uninit'
 
 
@@ -299,7 +301,7 @@ def test_bad_feedback_after_initial_pose_does_not_start_teleop(fake_rig):
         r.run(hands=True)
     assert [e[2] for e in r.events if e[0] == 'home-done'] == ['left', 'right']
     assert not any(e[0] in ('move', 'hand', 'pico-start') for e in r.events)
-    assert {e[2] for e in r.events if e[0] == 'stop'} == {'left', 'right'}
+    assert {e[2] for e in r.events if e[0] == 'stop'} == set(r.sides)
 
 
 def test_interrupted_initial_pose_stops_both_without_starting_teleop(fake_rig):
@@ -309,7 +311,7 @@ def test_interrupted_initial_pose_stops_both_without_starting_teleop(fake_rig):
         r.run(hands=True)
     assert [e[2] for e in r.events if e[0] == 'home'] == ['left']
     assert not any(e[0] in ('move', 'hand', 'pico-start') for e in r.events)
-    assert {e[2] for e in r.events if e[0] == 'stop'} == {'left', 'right'}
+    assert {e[2] for e in r.events if e[0] == 'stop'} == set(r.sides)
 
 
 def test_unavailable_hand_retargeter_prevents_initial_arm_motion(fake_rig):
@@ -318,3 +320,27 @@ def test_unavailable_hand_retargeter_prevents_initial_arm_motion(fake_rig):
     with pytest.raises(RuntimeError, match='hand retargeter unavailable'):
         r.run(hands=True)
     assert r.events == []
+
+
+def test_side_specific_mixed_hand_selection(monkeypatch):
+    calls = []
+    monkeypatch.setattr(entry, 'run', lambda args: calls.append(args))
+    assert entry.main([
+        '--arm', 'both', '--left-hand', 'gripper', '--right-hand', 'linker_l20',
+        '--input-source', 'avp', '--avp-ip', '10.10.10.126',
+    ]) == 0
+    args = calls[0]
+    assert args.arm == 'both'
+    assert args.left_hand == 'gripper'
+    assert args.right_hand == 'linker_l20'
+    assert args.input_source == 'avp'
+    assert args.avp_ip == '10.10.10.126'
+
+
+def test_pinch_distance_maps_to_realman_gripper_position():
+    assert entry._pinch_to_gripper_position(None) is None
+    assert entry._pinch_to_gripper_position(0.02) == 1
+    assert entry._pinch_to_gripper_position(0.06) == 500
+    assert entry._pinch_to_gripper_position(0.10) == 1000
+    assert entry._pinch_to_gripper_position(0.0) == 1
+    assert entry._pinch_to_gripper_position(1.0) == 1000

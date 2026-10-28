@@ -78,6 +78,25 @@ def allow(_now):
     pass
 
 
+def test_single_side_only_connects_and_stops_requested_arm():
+    log = []
+
+    def factory(ip):
+        return FakeArm(ip, log)
+
+    out = RealManOutput("left", "right", sides=("right",), factory=factory)
+    try:
+        states = out.connect()
+        assert set(states) == {"right"}
+        assert [event[0] for event in log] == ["right"]
+        out.enable_motion()
+        out.send_joints("right", np.zeros(7), guard=allow)
+    finally:
+        out.close()
+
+    assert [event[1] for event in log] == ["read", "move", "stop", "close", "uninit"]
+
+
 def test_read_only_never_sends_motion_or_stop(sdk):
     out, _, log = sdk
     states = out.connect()

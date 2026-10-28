@@ -88,6 +88,15 @@ class AVPInput:
         self._latest = data
         return True
 
+    def stop(self) -> None:
+        """Stop the AVP pose stream and release its socket, if supported."""
+        streamer = getattr(self, "_streamer", None)
+        if streamer is None:
+            return
+        stop = getattr(streamer, "_stop_pose_streaming", None)
+        if stop is not None:
+            stop()
+
     # -- wrist pose ---------------------------------------------------------
 
     def get_wrist_pose(

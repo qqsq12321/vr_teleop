@@ -46,14 +46,22 @@ class ArmFeedback:
 class RealManOutput:
     _owner_lock = threading.Lock()
 
-    def __init__(self, left_ip: str, right_ip: str, *, factory=None,
+    def __init__(self, left_ip: str, right_ip: str, *, sides=SIDES, factory=None,
                  clock: Callable[[], float] = time.monotonic,
-                 right_j1_offset_deg: float = 0.0):
-        if left_ip == right_ip:
+                 right_j1_offset_deg: float = 0.0,
+                 right_j1_model_wrap_rad: float = 0.0):
+        selected = tuple(dict.fromkeys(str(side).lower() for side in sides))
+        if not selected or any(side not in SIDES for side in selected):
+            raise ValueError(f"RealMan sides must be left/right, got {selected}")
+        if len(selected) == 2 and left_ip == right_ip:
             raise ValueError("Left/right arm IPs must differ")
+        self.sides = selected
         self.right_j1_offset_deg = float(right_j1_offset_deg)
+        self.right_j1_model_wrap_rad = float(right_j1_model_wrap_rad)
         if not np.isfinite(self.right_j1_offset_deg):
             raise ValueError("Right J1 offset must be finite")
+        if not np.isfinite(self.right_j1_model_wrap_rad):
+            raise ValueError("Right J1 model wrap must be finite")
         self.ips = dict(zip(SIDES, (left_ip, right_ip)))
         self.clock = clock
         self._factory = factory
@@ -70,6 +78,7 @@ class RealManOutput:
             raise ValueError(f"Unknown arm side: {side}")
         q = np.rad2deg(_joints(q_rad))
         if side == "right":
+            q[0] += np.rad2deg(self.right_j1_model_wrap_rad)
             q[0] += self.right_j1_offset_deg
         return q
 
@@ -79,6 +88,7 @@ class RealManOutput:
         q = _joints(q_deg).copy()
         if side == "right":
             q[0] -= self.right_j1_offset_deg
+            q[0] -= np.rad2deg(self.right_j1_model_wrap_rad)
         return np.deg2rad(q)
 
     def connect(self):
@@ -107,7 +117,7 @@ class RealManOutput:
                             raise
                         return arm
 
-                for side in SIDES:
+                for side in self.sides:
                     arm = factory(self.ips[side])
                     self._arms[side] = arm
                     _check(arm.Arm_Socket_State(), f"{side} connection")
@@ -150,12 +160,12 @@ class RealManOutput:
             self._motion_enabled = True
 
     def _require_connected(self):
-        if set(self._arms) != set(SIDES):
-            raise RealManError("Both arm connections are required, even for single-arm control")
+        if set(self._arms) != set(self.sides):
+            raise RealManError(f"Requested arm connections are incomplete: {self.sides}")
 
     def _require_motion(self, side, guard):
         self._require_connected()
-        if side not in SIDES or not self._motion_enabled or self._fault:
+        if side not in self.sides or not self._motion_enabled or self._fault:
             raise RealManError(f"Motion disabled or faulted: {side}, {self._fault}")
         # Called immediately before EACH SDK write, including after blocking I/O.
         try:
@@ -292,16 +302,33 @@ class RealManOutput:
                     LOG.exception("Unable to confirm stop for %s; use physical emergency stop", side)
             self._motion_enabled = False
 
+    @staticmethod
+    def _close_socket(arm):
+        """Close only a socket that the SDK reports as connected.
+
+        Arm_Socket_Start returns an error code as ``nSocket`` when the
+        controller rejects the TCP connection. Calling Arm_Socket_Close on
+        that error code causes a misleading ``Bad file descriptor`` during
+        cleanup and hides the original connection error.
+        """
+        try:
+            state = arm.Arm_Socket_State()
+        except Exception:
+            state = None
+        if state != 0:
+            return
+        try:
+            arm.Arm_Socket_Close()
+        except Exception:
+            LOG.exception("Socket close failed")
+
     def close(self):
         with self._lock:
             self.stop()
             arms = list(self._arms.values())
             self._arms.clear()
             for arm in arms:
-                try:
-                    arm.Arm_Socket_Close()
-                except Exception:
-                    LOG.exception("Socket close failed")
+                self._close_socket(arm)
             try:
                 if arms:
                     arms[-1].RM_API_UnInit()  # Global; only after both sockets close.
