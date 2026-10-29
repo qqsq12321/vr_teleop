@@ -40,6 +40,7 @@ from utils.robots.dexforce import DexForceSpec
 from utils.robots.galbot import GalbotInspireSpec
 from utils.robots.realman_rm75b import RealManRM75BInspireSpec
 from utils.robots.realman_rm75b_l20 import RealManRM75BL20Spec
+from utils.robots.realman_rm75b_single import RealManRM75BSingleSpec
 
 # ---------------------------------------------------------------------------
 # Scene / config paths
@@ -49,6 +50,7 @@ _DEXFORCE_SPEC = DexForceSpec()
 _GALBOT_SPEC = GalbotInspireSpec()
 _REALMAN_RM75B_SPEC = RealManRM75BInspireSpec()
 _REALMAN_RM75B_L20_SPEC = RealManRM75BL20Spec()
+_REALMAN_RM75B_SINGLE_SPEC = RealManRM75BSingleSpec()
 _CVTE_CARM_D3_SPEC = CVTECArmD3Spec()
 
 
@@ -56,6 +58,7 @@ _DEFAULT_HANDS = {
     "dexforce": "linker_l20",
     "galbot": "inspire",
     "realman_rm75b": "inspire",
+    "realman_rm75b_single": "none",
     "cvte": "gripper",
 }
 _HAND_ALIASES = {
@@ -64,14 +67,35 @@ _HAND_ALIASES = {
     "linker": "linker_l20",
     "linker_l20": "linker_l20",
     "gripper": "gripper",
+    # Arm-only: teleoperation drives the flange and nothing beyond it.
+    "none": "none",
 }
 _ROBOT_HAND_SPECS = {
     ("dexforce", "linker_l20"): _DEXFORCE_SPEC,
     ("galbot", "inspire"): _GALBOT_SPEC,
     ("realman_rm75b", "inspire"): _REALMAN_RM75B_SPEC,
     ("realman_rm75b", "linker_l20"): _REALMAN_RM75B_L20_SPEC,
+    ("realman_rm75b_single", "none"): _REALMAN_RM75B_SINGLE_SPEC,
     ("cvte", "gripper"): _CVTE_CARM_D3_SPEC,
 }
+_ALL_SIDES = ("left", "right")
+
+
+def _resolve_sides(spec, arm: str) -> tuple[str, ...]:
+    """Pick the sides to drive, narrowed to what the spec actually has.
+
+    ``--arm both`` on a single-arm spec means "every arm it has" rather than an
+    error, so the default flag value stays usable without the caller knowing
+    the robot's arm count.
+    """
+    spec_sides = tuple(getattr(spec, "sides", _ALL_SIDES))
+    if arm == "both":
+        return spec_sides
+    if arm not in spec_sides:
+        raise ValueError(
+            f"Robot does not have a {arm} arm; available: {', '.join(spec_sides)}"
+        )
+    return (arm,)
 
 
 def _normalize_hand(robot: str, hand: str | None) -> str:
@@ -176,7 +200,12 @@ def _apply_pico4_head_torso(
     spec.apply_head_torso(model, data, _set, torso_joints, yaw, pitch, t)
 
 
-def _apply_initial_pose(model: mujoco.MjModel, data: mujoco.MjData, spec=None) -> None:
+def _apply_initial_pose(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    spec=None,
+    sides: tuple[str, ...] = _ALL_SIDES,
+) -> None:
     key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
     if key_id != -1:
         mujoco.mj_resetDataKeyframe(model, data, key_id)
@@ -185,8 +214,8 @@ def _apply_initial_pose(model: mujoco.MjModel, data: mujoco.MjData, spec=None) -
             _write_joint_qpos(model, data, spec.torso_joint_names, spec.torso_home_qpos)
         if spec.head_joint_names:
             _write_joint_qpos(model, data, spec.head_joint_names, spec.head_home_qpos)
-        _write_joint_qpos(model, data, spec.arm_joint_names("left"), spec.arm_home_qpos("left"))
-        _write_joint_qpos(model, data, spec.arm_joint_names("right"), spec.arm_home_qpos("right"))
+        for side in sides:
+            _write_joint_qpos(model, data, spec.arm_joint_names(side), spec.arm_home_qpos(side))
     mujoco.mj_forward(model, data)
 
 
@@ -219,7 +248,8 @@ def _run_bimanual(args: argparse.Namespace) -> None:
     data = mujoco.MjData(model)
     ik_data = mujoco.MjData(model)
 
-    _apply_initial_pose(model, data, spec)
+    sides = _resolve_sides(spec, getattr(args, "arm", "both"))
+    _apply_initial_pose(model, data, spec, sides)
     if model.nu:
         key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
         if key_id != -1 and model.key_ctrl.shape[0] > key_id:
@@ -227,29 +257,19 @@ def _run_bimanual(args: argparse.Namespace) -> None:
         else:
             data.ctrl[: min(model.nu, model.nq)] = data.qpos[: min(model.nu, model.nq)]
 
-    left_hand_config = _resolve_hand_config(args, spec, side="left")
-    right_hand_config = _resolve_hand_config(args, spec, side="right")
-
-    left_arm = TeleopArmController(
-        model,
-        data,
-        ik_data,
-        "left",
-        args,
-        hand_config=left_hand_config,
-        hand_type=spec.hand_type,
-        **_controller_kwargs(spec, "left", robot_label),
-    )
-    right_arm = TeleopArmController(
-        model,
-        data,
-        ik_data,
-        "right",
-        args,
-        hand_config=right_hand_config,
-        hand_type=spec.hand_type,
-        **_controller_kwargs(spec, "right", robot_label),
-    )
+    arms = {
+        side: TeleopArmController(
+            model,
+            data,
+            ik_data,
+            side,
+            args,
+            hand_config=_resolve_hand_config(args, spec, side=side),
+            hand_type=spec.hand_type,
+            **_controller_kwargs(spec, side, robot_label),
+        )
+        for side in sides
+    }
 
     input_stream = TeleopInputStream(args)
 
@@ -271,7 +291,9 @@ def _run_bimanual(args: argparse.Namespace) -> None:
         while vis.is_running():
             loop_start = time.time()
 
-            input_stream.poll_arms(left_arm, right_arm, _quest3_sim_pose_converter)
+            input_stream.poll_arms(
+                arms.get("left"), arms.get("right"), _quest3_sim_pose_converter
+            )
             if input_stream.pico4_input is not None:
                 # Head pose → 躯干/颈部
                 head_raw = input_stream.get_pico4_head_pose()
@@ -318,15 +340,14 @@ def _run_bimanual(args: argparse.Namespace) -> None:
                     _head_zero_y[0] = None
                     _last_head_pose_time[0] = 0.0
 
-            q_left = left_arm.step_ik()
-            q_right = right_arm.step_ik()
+            solved = {side: arm.step_ik() for side, arm in arms.items()}
             if args.control_mode == "ctrl":
                 now_perf = time.perf_counter()
                 physics_accumulator += min(now_perf - last_physics_time, args.max_physics_dt)
                 last_physics_time = now_perf
 
-                left_arm.apply_ctrl(q_left)
-                right_arm.apply_ctrl(q_right)
+                for side, arm in arms.items():
+                    arm.apply_ctrl(solved[side])
                 step_count = min(
                     args.max_physics_steps,
                     int(physics_accumulator / model.opt.timestep),
@@ -338,16 +359,18 @@ def _run_bimanual(args: argparse.Namespace) -> None:
                 else:
                     mujoco.mj_forward(model, data)
             else:
-                left_arm.apply_qpos(q_left)
-                right_arm.apply_qpos(q_right)
+                for side, arm in arms.items():
+                    arm.apply_qpos(solved[side])
                 mujoco.mj_forward(model, data)
             vis.sync()
 
             now = time.time()
             if now - last_log_time > 1.0:
                 print(
-                    f"L resid: {left_arm.latest_residual} "
-                    f"R resid: {right_arm.latest_residual}"
+                    " ".join(
+                        f"{side[0].upper()} resid: {arm.latest_residual}"
+                        for side, arm in arms.items()
+                    )
                 )
                 last_log_time = now
 
@@ -370,7 +393,11 @@ def main() -> None:
         "--robot",
         default="dexforce",
         choices=sorted(_DEFAULT_HANDS),
-        help="Robot body to teleoperate: dexforce (default), galbot, realman_rm75b, or cvte (CVTE CARM D3).",
+        help=(
+            "Robot body to teleoperate: dexforce (default), galbot, "
+            "realman_rm75b, realman_rm75b_single (one floor-mounted arm, no "
+            "end effector), or cvte (CVTE CARM D3)."
+        ),
     )
     parser.add_argument(
         "--hand",
@@ -378,9 +405,20 @@ def main() -> None:
         choices=sorted(_HAND_ALIASES),
         help=(
             "Dexterous hand/end-effector: defaults to linker_l20 for dexforce, "
-            "inspire for galbot/realman_rm75b, and gripper for cvte "
+            "inspire for galbot/realman_rm75b, gripper for cvte "
             "(a single-DOF parallel gripper driven by VR pinch distance, not "
-            "AnyDexRetarget). realman_rm75b also accepts linker_l20."
+            "AnyDexRetarget), and none for realman_rm75b_single (arm only). "
+            "realman_rm75b also accepts linker_l20."
+        ),
+    )
+    parser.add_argument(
+        "--arm",
+        default="both",
+        choices=("left", "right", "both"),
+        help=(
+            "Arm selection (default: both). On a single-arm robot 'both' "
+            "resolves to the only arm it has, and naming the absent side is "
+            "an error."
         ),
     )
     parser.add_argument(

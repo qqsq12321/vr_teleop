@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="realman_rm75b_single">
+  <compiler angle="radian" />
+  <statistic center="0 0 0.305" extent="1.220" />
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" />
+  <visual>
+    <global azimuth="135" elevation="-18" offwidth="1600" offheight="1200" />
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.75 0.75 0.75" specular="0.15 0.15 0.15" />
+  </visual>
+  <default>
+    <default class="realman_arm">
+      <position kp="500" kv="70" forcerange="-60 60" />
+    </default>
+  </default>
+  <asset>
+    <mesh name="base_link" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/base_link.STL" />
+    <mesh name="link_1" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_1.STL" />
+    <mesh name="link_2" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_2.STL" />
+    <mesh name="link_3" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_3.STL" />
+    <mesh name="link_4" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_4.STL" />
+    <mesh name="link_5" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_5.STL" />
+    <mesh name="link_6" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_6.STL" />
+    <mesh name="link_7" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/link_7.STL" />
+  </asset>
+  <worldbody>
+    <body name="rm75_single_base" pos="0 0 0.0000">
+      <body name="base_link">
+        <inertial pos="0.00049987 5.2709e-05 0.060019" quat="0.996756 -0.0010166 0.0229987 -0.0771247" mass="1.862" diaginertia="0.00172544 0.00170461 0.000899831" />
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="base_link" />
+        <body name="link_1" pos="0 0 0.2405">
+          <inertial pos="0.000241 -0.013273 -0.00995" quat="0.994748 0.0977096 0.00152589 0.0304335" mass="1.574" diaginertia="0.00248814 0.00235608 0.00141495" />
+          <joint name="joint_1" pos="0 0 0" axis="0 0 1" range="-3.106 3.106" actuatorfrcrange="-60 60" damping="0.5" armature="0.001" />
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_1" />
+          <body name="link_2" quat="0.707105 -0.707108 0 0">
+            <inertial pos="-0.000357 -0.106789 0.005329" quat="0.42567 0.528808 -0.571708 0.460778" mass="1.217" diaginertia="0.00357183 0.00349364 0.000765446" />
+            <joint name="joint_2" pos="0 0 0" axis="0 0 1" range="-2.2689 2.2689" actuatorfrcrange="-60 60" damping="0.5" armature="0.001" />
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_2" />
+            <body name="link_3" pos="0 -0.256 0" quat="0.707105 0.707108 0 0">
+              <inertial pos="3e-06 -0.01398 -0.011324" quat="0.999101 0.0421927 0.00270285 0.00294856" mass="1.11" diaginertia="0.0018367 0.00150201 0.00105938" />
+              <joint name="joint_3" pos="0 0 0" axis="0 0 1" range="-3.106 3.106" actuatorfrcrange="-30 30" damping="0.5" armature="0.001" />
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_3" />
+              <body name="link_4" quat="0.707105 -0.707108 0 0">
+                <inertial pos="-5e-06 -0.084658 0.004747" quat="0.432821 0.552209 -0.561126 0.439168" mass="0.685" diaginertia="0.00131346 0.00128244 0.000315738" />
+                <joint name="joint_4" pos="0 0 0" axis="0 0 1" range="-2.356 2.356" actuatorfrcrange="-30 30" damping="0.5" armature="0.001" />
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_4" />
+                <body name="link_5" pos="0 -0.21 0" quat="0.707105 0.707108 0 0">
+                  <inertial pos="7.8e-05 -0.012937 -0.008781" quat="0.995304 0.096364 0.00225001 0.00888711" mass="0.619" diaginertia="0.000627369 0.000549264 0.000363449" />
+                  <joint name="joint_5" pos="0 0 0" axis="0 0 1" range="-3.106 3.106" actuatorfrcrange="-10 10" damping="0.5" armature="0.001" />
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_5" />
+                  <body name="link_6" quat="0.707105 -0.707108 0 0">
+                    <inertial pos="-1.4e-05 -0.078524 0.002819" quat="0.430179 0.5452 -0.565052 0.445442" mass="0.602" diaginertia="0.000792852 0.000780759 0.000261092" />
+                    <joint name="joint_6" pos="0 0 0" axis="0 0 1" range="-2.234 2.234" actuatorfrcrange="-10 10" damping="0.5" armature="0.001" />
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_6" />
+                    <body name="link_7" pos="0 -0.144 0" quat="0.707105 0.707108 0 0">
+                      <inertial pos="0.001094 -7.7e-05 -0.010119" quat="0.505029 0.501976 -0.49846 0.494473" mass="0.107" diaginertia="6.54492e-05 4.41192e-05 3.50775e-05" />
+                      <joint name="joint_7" pos="0 0 0" axis="0 0 1" range="-6.28 6.28" actuatorfrcrange="-10 10" damping="0.5" armature="0.001" />
+                      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="link_7" />
+                      <body name="right_arm_end_effector_mount_link" pos="0 0 0">
+                        <site name="right_tcp" pos="0 0 0" size="0.008" rgba="1 0.2 0.1 1" />
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <light pos="1 -1 3" dir="-1 1 -2" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" />
+    <geom name="floor" type="plane" size="3 3 0.1" rgba="0.16 0.18 0.20 1" contype="1" conaffinity="1" />
+  </worldbody>
+  <actuator>
+    <position class="realman_arm" name="joint_1" joint="joint_1" ctrlrange="-3.106 3.106" />
+    <position class="realman_arm" name="joint_2" joint="joint_2" ctrlrange="-2.2689 2.2689" />
+    <position class="realman_arm" name="joint_3" joint="joint_3" ctrlrange="-3.106 3.106" />
+    <position class="realman_arm" name="joint_4" joint="joint_4" ctrlrange="-2.356 2.356" />
+    <position class="realman_arm" name="joint_5" joint="joint_5" ctrlrange="-3.106 3.106" />
+    <position class="realman_arm" name="joint_6" joint="joint_6" ctrlrange="-2.234 2.234" />
+    <position class="realman_arm" name="joint_7" joint="joint_7" ctrlrange="-6.28 6.28" />
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="0 0.93 0 1.27 0 -0.7 0" ctrl="0 0.93 0 1.27 0 -0.7 0" />
+  </keyframe>
+</mujoco>

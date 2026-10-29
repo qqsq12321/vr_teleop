@@ -60,6 +60,8 @@ class TeleopInputStream:
                 result.stop_requested = True
                 return result
             for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                if arm is None:
+                    continue
                 if arm.update_hand_from_mediapipe(self.avp_input.get_landmarks_mediapipe(side)):
                     result.saw_valid_data = True
                 if arm.update_hand_from_pinch(self.avp_input.get_pinch_distance(side)):
@@ -72,6 +74,8 @@ class TeleopInputStream:
 
         if self.pico4_input is not None:
             for arm, side in ((left_arm, "left"), (right_arm, "right")):
+                if arm is None:
+                    continue
                 if arm.update_hand_from_mediapipe(self.pico4_input.get_landmarks_mediapipe(side)):
                     result.saw_valid_data = True
                 if arm.update_hand_from_pinch(self.pico4_input.get_pinch_distance(side)):
@@ -87,6 +91,8 @@ class TeleopInputStream:
             return result
         message = packet.decode("utf-8", errors="ignore")
         for arm, side in ((left_arm, "left"), (right_arm, "right")):
+            if arm is None:
+                continue
             landmarks = parse_left_landmarks(message) if side == "left" else parse_right_landmarks(message)
             if arm.update_hand_from_raw_landmarks(landmarks):
                 result.saw_valid_data = True
