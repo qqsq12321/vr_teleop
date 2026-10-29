@@ -1,0 +1,34 @@
+# Floor-mounted single RM75-B arm. Kept separate from realman_real.yaml,
+# which describes the dual-arm torso robot on a different subnet and whose
+# loader requires both left_ip and right_ip.
+#
+# No hardware performance guarantee. The safety section is for the legacy
+# debug runner only.
+network:
+  # The lone arm is addressed as the right side; RealManOutput connects only
+  # the sides it is given. The vendored legacy SDK fixes TCP port to 8080.
+  right_ip: 192.168.1.18
+input:
+  mode: relay
+  relay_host: 127.0.0.1
+  relay_port: 63902
+  direct_port: 63901
+  broadcast_port: 29888
+control:
+  position_scale: 1.5
+  ema_alpha: 0.5
+  rot_weight: 1.0
+  ik_damping: 0.001
+  ik_current_weight: 0.3
+  pos_gain: 0.08
+  rot_gain: 0.08
+  follow: true
+safety:  # legacy debug runner only; not used by the daily master-style loop.
+  rate_hz: 50.0
+  input_timeout_s: 0.25
+  feedback_timeout_s: 0.2
+  command_timeout_s: 0.08
+  joint_margin_rad: 0.0872664626
+  tracking_error_rad: 0.1745329252
+  tracking_error_grace_s: 0.2
+  collision_margin_m: 0.02

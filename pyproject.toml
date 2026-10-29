@@ -11,6 +11,10 @@ dependencies = [
 
 [project.optional-dependencies]
 realman = ["PyYAML>=6.0"]
+# RM_API2, the vendor's handle-based SDK. Only the single-arm RM75-B real-robot
+# path needs it; simulation and the legacy dual-arm path (which uses the
+# vendored SDK under third_party/realman_api) do not.
+rm75b-single = ["PyYAML>=6.0", "Robotic_Arm>=1.1.6"]
 test = ["pytest>=8.0"]
 
 [build-system]
