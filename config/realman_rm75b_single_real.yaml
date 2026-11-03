@@ -38,18 +38,9 @@ safety:  # legacy debug runner only; not used by the daily master-style loop.
   tracking_error_grace_s: 0.2
   collision_margin_m: 0.02
 hands:
-  # Both hands plug into the arm's end tool port; the controller relays their
+  # The hand plugs into the arm's end tool port; the controller relays its
   # RS485 traffic. The tool port's supply voltage is NOT set from here: it is
-  # read, and the program refuses to start at 0V. Set it on the teach pendant
-  # for whichever hand is actually fitted.
+  # read, and the program refuses to start at 0V. Set it on the teach pendant.
   inspire:
     baudrate: 115200
     rate_hz: 25
-  rohand:
-    # OYMotion factory defaults (roh_firmware protocol doc): node id 2, 115200.
-    baudrate: 115200
-    device_id: 2
-    rate_hz: 25
-    # Which end of ROHand's 0..65535 logical range is a closed finger. The
-    # vendor protocol does not say; confirm with --hand-only before trusting it.
-    closed_is_max: true

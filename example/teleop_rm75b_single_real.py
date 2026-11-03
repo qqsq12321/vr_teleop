@@ -19,7 +19,7 @@ Examples:
     python example/teleop_rm75b_single_real.py --check
     python example/teleop_rm75b_single_real.py --read-only --duration 10
     python example/teleop_rm75b_single_real.py --enable-motion --input-source pico4
-    python example/teleop_rm75b_single_real.py --hand-only --hand rohand
+    python example/teleop_rm75b_single_real.py --hand-only --hand inspire
     python example/teleop_rm75b_single_real.py --enable-motion --hand inspire
 """
 
@@ -100,8 +100,8 @@ def load_config(config_path):
     # Optional per-hand transport settings. Supply voltage is deliberately not
     # configurable here: it is read, never set.
     hands = config.setdefault("hands", {})
-    if not isinstance(hands, dict) or not set(hands) <= {"inspire", "rohand"}:
-        raise ValueError("hands section may only contain inspire and rohand")
+    if not isinstance(hands, dict) or not set(hands) <= {"inspire"}:
+        raise ValueError("hands section may only contain inspire")
     for name, settings in hands.items():
         if not isinstance(settings, dict):
             raise ValueError(f"hands.{name} must be a mapping")
@@ -110,11 +110,6 @@ def load_config(config_path):
         rate = settings.get("rate_hz", HAND_RATE_HZ)
         if type(rate) not in (int, float) or not 0 < rate <= 100:
             raise ValueError(f"hands.{name}.rate_hz must be in (0, 100]")
-    rohand = hands.get("rohand", {})
-    if not 1 <= int(rohand.get("device_id", 2)) <= 247:
-        raise ValueError("hands.rohand.device_id must be a Modbus address 1..247")
-    if type(rohand.get("closed_is_max", True)) is not bool:
-        raise ValueError("hands.rohand.closed_is_max must be boolean")
     return config
 
 
@@ -198,25 +193,11 @@ def run_read_only(args, *, output_factory=None) -> int:
         print("READ-ONLY. Motion is not enabled; no motion command will be sent.", flush=True)
         print(f"Controller generation: {output.controller_version}", flush=True)
         print(f"Home pose for reference (deg): {np.rad2deg(home).round(2).tolist()}", flush=True)
-        reads_hand = False
         if hand != "none":
             print(f"Tool port supply: {output.tool_voltage()}", flush=True)
-            if hand == "rohand":
-                # Reading ROHand needs the port in Modbus mode. That is port
-                # configuration only; no finger target is ever written here.
-                settings = config["hands"].get("rohand", {})
-                output.configure_hand(
-                    "rohand",
-                    baudrate=settings.get("baudrate", 115200),
-                    device_id=settings.get("device_id", 2),
-                )
-                reads_hand = True
         while True:
             degrees = np.rad2deg(feedback.q_rad)
-            line = f"measured (deg): {degrees.round(2).tolist()}"
-            if reads_hand:
-                line += f"  ROHand pos: {output.read_hand()}"
-            print(line, flush=True)
+            print(f"measured (deg): {degrees.round(2).tolist()}", flush=True)
             if deadline is not None and time.monotonic() >= deadline:
                 break
             time.sleep(0.5)
@@ -608,47 +589,26 @@ def _setup_hand(output, args, spec, config):
     """
     sys.path.insert(1, str(ROOT / "third_party" / "AnyDexRetarget"))
     from utils.adapters.output.inspire_mapping import raw_qpos_to_channels
-    from utils.adapters.output.realman_rm75b_single_real import (
-        INSPIRE_CHANNEL_MAX,
-        ROHAND_CHANNEL_MAX,
-    )
-    from utils.adapters.output.rohand_mapping import raw_qpos_to_positions
+    from utils.adapters.output.realman_rm75b_single_real import INSPIRE_CHANNEL_MAX
     from utils.core.hand.retarget import HandRetargeter
 
     kind = args.hand
     settings = config["hands"].get(kind, {})
-    closed_is_max = settings.get("closed_is_max", True)
     retargeter = HandRetargeter(spec.hand_config_path(args.input_source, SIDE), SIDE)
     if not retargeter.available:
         raise RuntimeError(f"{kind} hand retargeter unavailable")
-    output.configure_hand(
-        kind,
-        baudrate=settings.get("baudrate", 115200),
-        device_id=settings.get("device_id", 2),
-    )
+    output.configure_hand(kind, baudrate=settings.get("baudrate", 115200))
     output.enable_hand()
     print(f"Hand: {kind} on the tool port ({output.tool_voltage()}).", flush=True)
 
-    def send(channels):
-        output.send_hand(channels, guard=_transport_guard)
-
-    if kind == "inspire":
-        full_scale = INSPIRE_CHANNEL_MAX
-
-        def to_channels(raw):
-            return raw_qpos_to_channels(raw, spec, scale=INSPIRE_CHANNEL_MAX)
-    else:
-        full_scale = ROHAND_CHANNEL_MAX
-        joint_names = retargeter.joint_names
-
-        def to_channels(raw):
-            return raw_qpos_to_positions(raw, joint_names, spec, closed_is_max=closed_is_max)
+    def to_channels(raw):
+        return raw_qpos_to_channels(raw, spec, scale=INSPIRE_CHANNEL_MAX)
 
     return _HandDriver(
         retarget=retargeter.retarget_mediapipe,
         to_channels=to_channels,
-        send=send,
-        full_scale=full_scale,
+        send=lambda channels: output.send_hand(channels, guard=_transport_guard),
+        full_scale=INSPIRE_CHANNEL_MAX,
         rate_hz=settings.get("rate_hz", HAND_RATE_HZ),
     )
 
@@ -747,9 +707,9 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
-        "--hand", choices=("none", "inspire", "rohand"), default="none",
-        help="Hand on the flange's tool port: none (default), inspire, or rohand "
-             "(OYMotion). Hand-tracking only; not driven with --controller.",
+        "--hand", choices=("none", "inspire"), default="none",
+        help="Hand on the flange's tool port: none (default) or inspire. "
+             "Hand-tracking only; not driven with --controller.",
     )
     parser.add_argument(
         "--input-source", choices=("pico4", "avp"), default="pico4",
@@ -774,7 +734,7 @@ def main(argv=None) -> int:
     if args.controller and args.input_source != "pico4":
         parser.error("--controller is only available with --input-source pico4")
     if args.hand_only and args.hand == "none":
-        parser.error("--hand-only needs --hand inspire or --hand rohand")
+        parser.error("--hand-only needs --hand inspire")
     if args.hand_only and args.controller:
         parser.error("--hand-only uses hand tracking; --controller carries no hand data")
 

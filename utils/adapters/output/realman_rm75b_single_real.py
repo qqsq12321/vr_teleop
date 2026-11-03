@@ -31,27 +31,15 @@ DEFAULT_PORT = 8080
 # rm_movej for the planned startup move, matching the legacy path's profile.
 INITIAL_MOVE_SPEED = 20
 
-# End tool port (末端工具口). Both hands are wired here; the controller relays
-# their RS485 traffic.
-HAND_KINDS = ("none", "inspire", "rohand")
+# End tool port (末端工具口). The hand is wired here; the controller relays
+# its RS485 traffic.
+HAND_KINDS = ("none", "inspire")
 TOOL_VOLTAGE_LABELS = {0: "0V", 1: "5V", 2: "12V", 3: "24V"}
-# Third-generation API: port 1 is the end tool port's RS485.
-TOOL_PORT_V3 = 1
-# Fourth-generation API: rm_set_tool_rs485_mode modes, and the RTU "type" that
-# addresses the tool-side master.
-TOOL_RS485_RTU_MASTER = 0
+# Fourth-generation rm_set_tool_rs485_mode: switch the port to the
+# controller's built-in dexterous-hand protocol.
 TOOL_RS485_HAND = 1
-TOOL_RTU_TYPE = 1
-# rm_set_modbus_mode timeout is in units of 100 ms; 1 is the shortest allowed.
-MODBUS_TIMEOUT_100MS = 1
 
 INSPIRE_CHANNEL_MAX = 1000
-# OYMotion ROHand Modbus-RTU registers (roh_firmware, OHandModBusRTUProtocol):
-# six uint16 logical positions, thumb bend / index / middle / ring / little /
-# thumb rotation. Factory node id is 2.
-ROH_FINGER_POS_TARGET0 = 1135
-ROH_FINGER_POS0 = 1145
-ROHAND_CHANNEL_MAX = 65535
 HAND_CHANNELS = 6
 
 
@@ -68,17 +56,6 @@ def _hand_channels(values, maximum):
     ):
         raise ValueError(f"Expected {HAND_CHANNELS} integers in 0..{maximum}, got {list(values)}")
     return channels
-
-
-def _words_to_bytes(words):
-    """Third-generation register writes take bytes, most significant first."""
-    return [byte for word in words for byte in (word >> 8, word & 0xFF)]
-
-
-def _bytes_to_words(data):
-    # The third-generation read returns signed int8 values.
-    raw = [b & 0xFF for b in data]
-    return [(raw[i] << 8) | raw[i + 1] for i in range(0, len(raw), 2)]
 
 
 class RM75BSingleOutput:
@@ -100,7 +77,6 @@ class RM75BSingleOutput:
         port: int = DEFAULT_PORT,
         factory=None,
         clock: Callable[[], float] = time.monotonic,
-        sdk_types=None,
     ):
         if not isinstance(ip, str) or not ip:
             raise ValueError("A single arm IP address is required")
@@ -108,9 +84,6 @@ class RM75BSingleOutput:
         self.port = int(port)
         self.clock = clock
         self._factory = factory
-        # Module providing the RM_API2 parameter structs; loaded on demand so
-        # nothing imports the vendor native library before it is needed.
-        self._sdk_types = sdk_types
         self._arm = None
         self._lock = threading.RLock()
         self._owns_sdk = False
@@ -119,7 +92,6 @@ class RM75BSingleOutput:
         self.controller_version = None
         self._hand = None
         self._hand_enabled = False
-        self._modbus_open = False
 
     # -- unit conversion ----------------------------------------------------
 
@@ -258,13 +230,6 @@ class RM75BSingleOutput:
 
     # -- hand on the end tool port -------------------------------------------
 
-    def _types(self):
-        if self._sdk_types is None:
-            from Robotic_Arm import rm_ctypes_wrap
-
-            self._sdk_types = rm_ctypes_wrap
-        return self._sdk_types
-
     def tool_voltage(self) -> str:
         """Read the tool port supply. Never sets it: a wrong value can damage a hand."""
         with self._lock:
@@ -273,7 +238,7 @@ class RM75BSingleOutput:
             _check(code, "rm_get_tool_voltage")
             return TOOL_VOLTAGE_LABELS.get(int(voltage), f"code {voltage}")
 
-    def configure_hand(self, kind: str, *, baudrate: int = 115200, device_id: int = 2):
+    def configure_hand(self, kind: str, *, baudrate: int = 115200):
         """Put the tool port into the mode this hand speaks. Sends no hand target.
 
         Refuses when the tool port is unpowered rather than switching power on:
@@ -297,27 +262,16 @@ class RM75BSingleOutput:
                 raise RealManError(
                     f"Unknown controller generation {generation!r}; cannot pick the tool-port API"
                 )
-            arm = self._arm
-            try:
-                if kind == "inspire":
-                    # The controller speaks the Inspire protocol natively; the
-                    # fourth generation needs the port switched to hand mode.
-                    if generation == 4:
-                        _check(arm.rm_set_tool_rs485_mode(TOOL_RS485_HAND, int(baudrate)),
-                               "rm_set_tool_rs485_mode(hand)")
-                else:
-                    # ROHand is plain Modbus RTU through the controller.
-                    if generation == 4:
-                        _check(arm.rm_set_tool_rs485_mode(TOOL_RS485_RTU_MASTER, int(baudrate)),
-                               "rm_set_tool_rs485_mode(rtu master)")
-                    else:
-                        _check(arm.rm_set_modbus_mode(TOOL_PORT_V3, int(baudrate), MODBUS_TIMEOUT_100MS),
-                               "rm_set_modbus_mode")
-                        self._modbus_open = True
-            except Exception as exc:
-                self._fault = str(exc)
-                raise
-            self._hand = {"kind": kind, "device_id": int(device_id), "generation": generation}
+            # The controller speaks the Inspire protocol natively; the fourth
+            # generation needs the port switched to hand mode first.
+            if generation == 4:
+                try:
+                    _check(self._arm.rm_set_tool_rs485_mode(TOOL_RS485_HAND, int(baudrate)),
+                           "rm_set_tool_rs485_mode(hand)")
+                except Exception as exc:
+                    self._fault = str(exc)
+                    raise
+            self._hand = {"kind": kind, "generation": generation}
             LOG.info("Tool port %s, controller gen %s, configured for %s", voltage, generation, kind)
 
     def enable_hand(self):
@@ -331,14 +285,12 @@ class RM75BSingleOutput:
             self._hand_enabled = True
 
     def send_hand(self, channels, *, guard: Callable[[float], None]):
-        """Send one hand target: Inspire 6x 0..1000, ROHand 6x 0..65535."""
+        """Send one Inspire target: six channels, 0..1000."""
         with self._lock:
             self._require_connected()
-            hand = self._hand
-            if hand is None or not self._hand_enabled or self._fault:
+            if self._hand is None or not self._hand_enabled or self._fault:
                 raise RealManError(f"Hand disabled or faulted: {self._fault}")
-            maximum = INSPIRE_CHANNEL_MAX if hand["kind"] == "inspire" else ROHAND_CHANNEL_MAX
-            values = _hand_channels(channels, maximum)
+            values = _hand_channels(channels, INSPIRE_CHANNEL_MAX)
             try:
                 guard(self.clock())
             except InputTrackingFault:
@@ -347,44 +299,11 @@ class RM75BSingleOutput:
                 self._fault = str(exc)
                 raise
             try:
-                if hand["kind"] == "inspire":
-                    _check(self._arm.rm_set_hand_angle(values, False, 0), "rm_set_hand_angle")
-                elif hand["generation"] == 4:
-                    params = self._types().rm_modbus_rtu_write_params_t(
-                        ROH_FINGER_POS_TARGET0, hand["device_id"], TOOL_RTU_TYPE, HAND_CHANNELS, values
-                    )
-                    _check(self._arm.rm_write_modbus_rtu_registers(params), "ROHand register write")
-                else:
-                    params = self._types().rm_peripheral_read_write_params_t(
-                        TOOL_PORT_V3, ROH_FINGER_POS_TARGET0, hand["device_id"], HAND_CHANNELS
-                    )
-                    _check(self._arm.rm_write_registers(params, _words_to_bytes(values)),
-                           "ROHand register write")
+                _check(self._arm.rm_set_hand_angle(values, False, 0), "rm_set_hand_angle")
             except Exception as exc:
                 # A hand that stops answering fails closed like the arm does.
                 self._fault = str(exc)
                 raise
-
-    def read_hand(self):
-        """Current ROHand finger positions (0..65535), or None for other hands."""
-        with self._lock:
-            self._require_connected()
-            hand = self._hand
-            if hand is None or hand["kind"] != "rohand":
-                return None
-            if hand["generation"] == 4:
-                params = self._types().rm_modbus_rtu_read_params_t(
-                    ROH_FINGER_POS0, hand["device_id"], TOOL_RTU_TYPE, HAND_CHANNELS
-                )
-                code, data = self._arm.rm_read_modbus_rtu_holding_registers(params)
-                _check(code, "ROHand position read")
-                return [int(v) & 0xFFFF for v in data]
-            params = self._types().rm_peripheral_read_write_params_t(
-                TOOL_PORT_V3, ROH_FINGER_POS0, hand["device_id"], HAND_CHANNELS
-            )
-            code, data = self._arm.rm_read_multiple_holding_registers(params)
-            _check(code, "ROHand position read")
-            return _bytes_to_words(data)
 
     def stop(self):
         """Best-effort halt. This is NOT an emergency stop; use the physical one."""
@@ -405,13 +324,6 @@ class RM75BSingleOutput:
         with self._lock:
             self.stop()
             arm, self._arm = self._arm, None
-            if arm is not None and self._modbus_open:
-                # Third generation: hand the port back to its default mode.
-                try:
-                    arm.rm_close_modbus_mode(TOOL_PORT_V3)
-                except Exception:
-                    LOG.exception("Tool-port Modbus close failed")
-                self._modbus_open = False
             self._hand = None
             if arm is not None:
                 try:

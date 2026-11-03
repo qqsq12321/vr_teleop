@@ -29,7 +29,6 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 SCENE_DIR = ROOT_DIR / "example" / "scene_config"
 DEFAULT_SCENE = SCENE_DIR / "scene_realman_rm75b_single.xml"
 INSPIRE_SCENE = SCENE_DIR / "scene_realman_rm75b_single_inspire.xml"
-ROHAND_SCENE = SCENE_DIR / "scene_realman_rm75b_single_rohand.xml"
 ANYDEX_ADAPTIVE_CONFIG_DIR = (
     ROOT_DIR / "third_party" / "AnyDexRetarget" / "example" / "config" / "adaptive"
 )
@@ -68,47 +67,8 @@ def joint_name(index: int) -> str:
 # is the guard the dual-arm home values violate on r_joint1 (+227 deg).
 SINGLE_ARM_HOME_QPOS = (0.0, 0.93, 0.0, 1.27, 0.0, -0.70, 0.0)
 
-# Hand bodies, joints and actuators share the arm's side prefix so a hand's own
-# names (ROHand calls its root mesh "base_link") cannot collide with the arm's.
+# Hand joints carry the arm's side prefix, matching the dual-arm hand names.
 HAND_PREFIX = f"{SIDE}_"
-
-# ROHand joint names in the order its MJCF declares them, which is the order
-# the scene keeps them in. The retargeter emits URDF order instead.
-ROHAND_JOINT_NAMES = (
-    "if_slider_link", "if_slider_abpart_link", "if_proximal_link", "if_distal_link", "if_connecting_link",
-    "mf_slider_link", "mf_slider_abpart_link", "mf_proximal_link", "mf_distal_link", "mf_connecting_link",
-    "rf_slider_link", "rf_slider_abpart_link", "rf_proximal_link", "rf_distal_link", "rf_connecting_link",
-    "lf_slider_link", "lf_slider_abpart_link", "lf_proximal_link", "lf_distal_link", "lf_connecting_link",
-    "th_root_link", "th_proximal_link", "th_slider_link", "th_connecting_link", "th_distal_link",
-)
-# Retargeter (URDF order) -> scene (MJCF order). Same permutation AnyDex's own
-# MuJoCo output uses; tests re-derive it from joint names rather than trust it.
-ROHAND_QPOS_MAPPING = (
-    3, 4, 1, 2, 0, 13, 14, 11, 12, 10, 18, 19, 16, 17, 15,
-    8, 9, 6, 7, 5, 20, 21, 23, 24, 22,
-)
-# The six motors, in ROH_FINGER_POS_TARGET0..5 register order (thumb bend,
-# index, middle, ring, little, thumb rotation), each read from one retarget
-# joint by name and normalised between its open and closed angle.
-#
-# The URDF gives the proximal joints +-pi, which is no limit at all, so the
-# ranges come from replaying AnyDex's AVP recording (example/data/avp1.pkl)
-# through both this hand and the Inspire hand. Each ROHand finger tracks the
-# matching Inspire finger at corr -0.95..-0.99: the ROHand joint grows MORE
-# NEGATIVE as the finger closes. The wide span (~3 rad) is because this joint is
-# a link in the finger's four-bar linkage, not the anatomical knuckle. Values
-# are the Inspire-open and Inspire-closed medians, rounded. Thumb rotation
-# correlates weakly, so it uses the URDF's own 0..1.57.
-#
-# These are first estimates from a recording, not hardware measurements.
-ROHAND_CHANNELS = (
-    ("th_proximal_link", 1.0, -1.3),
-    ("if_proximal_link", 0.6, -2.6),
-    ("mf_proximal_link", 0.1, -2.5),
-    ("rf_proximal_link", -0.1, -2.6),
-    ("lf_proximal_link", -0.4, -2.6),
-    ("th_root_link", 0.0, 1.57),
-)
 
 
 @dataclass(frozen=True)
@@ -198,20 +158,7 @@ class RealManRM75BSingleInspireSpec(RealManRM75BSingleSpec):
     inspire_channel_invert: tuple[bool, ...] = _DUAL_INSPIRE.inspire_channel_invert
 
 
-@dataclass(frozen=True)
-class RealManRM75BSingleROHandSpec(RealManRM75BSingleSpec):
-    """Single RM75-B with an OYMotion ROHand right hand on the flange."""
-
-    scene_path: Path = ROHAND_SCENE
-    hand_type: str = "rohand"
-    retarget_hand_type: str | None = "rohand"
-    hand_joint_suffixes: tuple[str, ...] = ROHAND_JOINT_NAMES
-    hand_qpos_mapping: tuple[int, ...] | None = ROHAND_QPOS_MAPPING
-    rohand_channels: tuple[tuple[str, float, float], ...] = ROHAND_CHANNELS
-
-
 HAND_SPECS = {
     "none": RealManRM75BSingleSpec,
     "inspire": RealManRM75BSingleInspireSpec,
-    "rohand": RealManRM75BSingleROHandSpec,
 }

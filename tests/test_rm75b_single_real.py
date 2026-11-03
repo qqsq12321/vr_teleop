@@ -42,14 +42,13 @@ class FakeArm:
     """
 
     def __init__(self, log, *, arm_dof=ARM_DOF, handle_id=1, fail=None,
-                 version=4, voltage=3, hand_read=None):
+                 version=4, voltage=3):
         self.log = log
         self.arm_dof = arm_dof
         self._handle_id = handle_id
         self._fail = fail or {}
         self._version = version
         self._voltage = voltage
-        self._hand_read = hand_read
 
     def _code(self, verb):
         return self._fail.get(verb, 0)
@@ -95,50 +94,9 @@ class FakeArm:
         self.log.append((None, "rs485_mode", (mode, baudrate)))
         return self._code("rs485_mode")
 
-    def rm_set_modbus_mode(self, port, baudrate, timeout):
-        self.log.append((None, "modbus_mode", (port, baudrate, timeout)))
-        return self._code("modbus_mode")
-
-    def rm_close_modbus_mode(self, port):
-        self.log.append((None, "modbus_close", port))
-        return 0
-
     def rm_set_hand_angle(self, angles, block, timeout):
         self.log.append((None, "hand_angle", (tuple(angles), block)))
         return self._code("hand_angle")
-
-    def rm_write_modbus_rtu_registers(self, params):
-        self.log.append((None, "rtu_write", params))
-        return self._code("rtu_write")
-
-    def rm_write_registers(self, params, data):
-        self.log.append((None, "v3_write", (params, tuple(data))))
-        return self._code("v3_write")
-
-    def rm_read_modbus_rtu_holding_registers(self, params):
-        self.log.append((None, "rtu_read", params))
-        return self._code("rtu_read"), list(self._hand_read or [0] * params.num)
-
-    def rm_read_multiple_holding_registers(self, params):
-        self.log.append((None, "v3_read", params))
-        return self._code("v3_read"), list(self._hand_read or [0] * (params.num * 2))
-
-
-class FakeTypes:
-    """Stand-ins for the RM_API2 ctypes parameter structs, in their arg order."""
-
-    @staticmethod
-    def rm_modbus_rtu_write_params_t(address, device, type, num, data):
-        return SimpleNamespace(address=address, device=device, type=type, num=num, data=list(data))
-
-    @staticmethod
-    def rm_modbus_rtu_read_params_t(address, device, type, num):
-        return SimpleNamespace(address=address, device=device, type=type, num=num)
-
-    @staticmethod
-    def rm_peripheral_read_write_params_t(port, address, device, num):
-        return SimpleNamespace(port=port, address=address, device=device, num=num)
-
 
 def allow(_now):
     pass
@@ -175,13 +133,12 @@ def rig():
     def build(**kwargs):
         arm_kwargs = {
             key: kwargs.pop(key)
-            for key in ("fail", "arm_dof", "handle_id", "version", "voltage", "hand_read")
+            for key in ("fail", "arm_dof", "handle_id", "version", "voltage")
             if key in kwargs
         }
         return RM75BSingleOutput(
             "192.168.1.18",
             factory=lambda ip: factory(ip, **arm_kwargs),
-            sdk_types=FakeTypes,
             **kwargs,
         )
 
@@ -684,11 +641,8 @@ def test_controller_requires_pico():
 
 # -- hand on the tool port --------------------------------------------------
 
-from utils.adapters.output.rohand_mapping import raw_qpos_to_positions  # noqa: E402
-from utils.robots.realman_rm75b_single import RealManRM75BSingleROHandSpec  # noqa: E402
 
 SIX = [0, 1, 255, 256, 999, 1000]
-ROH_SIX = [0, 1, 255, 256, 40000, 65535]
 
 
 def _connected(build, **kwargs):
@@ -706,11 +660,11 @@ def test_unpowered_tool_port_is_refused_and_left_alone(rig):
     out = _connected(build, voltage=0)
     try:
         with pytest.raises(RealManError, match="0V"):
-            out.configure_hand("rohand")
+            out.configure_hand("inspire")
     finally:
         out.close()
     # Refused before touching the port, and the supply is never switched on.
-    for verb in ("rs485_mode", "modbus_mode", "rtu_write", "v3_write", "hand_angle"):
+    for verb in ("rs485_mode", "hand_angle"):
         assert _calls(log, verb) == []
 
 
@@ -738,58 +692,6 @@ def test_inspire_wire_format(rig, version):
     # the third generation speaks it by default.
     assert _calls(log, "rs485_mode") == ([(1, 115200)] if version == 4 else [])
     assert _calls(log, "hand_angle") == [(tuple(SIX), False)]
-    assert _calls(log, "modbus_mode") == []
-
-
-def test_rohand_fourth_generation_wire_format(rig):
-    build, log = rig
-    out = _connected(build, version=4)
-    try:
-        out.configure_hand("rohand", baudrate=115200, device_id=2)
-        out.enable_hand()
-        out.send_hand(ROH_SIX, guard=allow)
-    finally:
-        out.close()
-    assert _calls(log, "rs485_mode") == [(0, 115200)]  # Tool port as RTU master.
-    (params,) = _calls(log, "rtu_write")
-    assert (params.address, params.device, params.type, params.num) == (1135, 2, 1, 6)
-    assert params.data == ROH_SIX
-
-
-def test_rohand_third_generation_wire_format_and_port_restore(rig):
-    build, log = rig
-    out = _connected(build, version=3)
-    try:
-        out.configure_hand("rohand", baudrate=115200, device_id=2)
-        out.enable_hand()
-        out.send_hand(ROH_SIX, guard=allow)
-    finally:
-        out.close()
-    assert _calls(log, "modbus_mode") == [(1, 115200, 1)]
-    ((params, data),) = _calls(log, "v3_write")
-    assert (params.port, params.address, params.device, params.num) == (1, 1135, 2, 6)
-    # Third-generation writes take bytes, most significant first.
-    assert data == (0, 0, 0, 1, 0, 255, 1, 0, 156, 64, 255, 255)
-    # The port is handed back on close.
-    assert _calls(log, "modbus_close") == [1]
-
-
-@pytest.mark.parametrize(
-    "version, raw, expected",
-    [
-        (4, [10, 20, 30, 40, 50, 65535], [10, 20, 30, 40, 50, 65535]),
-        # Third generation returns signed int8 bytes; 0xFF arrives as -1.
-        (3, [0, 10, 1, 0, -1, -1, 0, 0, 0, 0, 0, 0], [10, 256, 65535, 0, 0, 0]),
-    ],
-)
-def test_rohand_position_read(rig, version, raw, expected):
-    build, _log = rig
-    out = _connected(build, version=version, hand_read=raw)
-    try:
-        out.configure_hand("rohand")
-        assert out.read_hand() == expected
-    finally:
-        out.close()
 
 
 @pytest.mark.parametrize(
@@ -798,8 +700,7 @@ def test_rohand_position_read(rig, version, raw, expected):
         ("inspire", [1001, 0, 0, 0, 0, 0]),
         ("inspire", [0] * 5),
         ("inspire", [0.5, 0, 0, 0, 0, 0]),
-        ("rohand", [65536, 0, 0, 0, 0, 0]),
-        ("rohand", [-1, 0, 0, 0, 0, 0]),
+        ("inspire", [-1, 0, 0, 0, 0, 0]),
     ],
 )
 def test_out_of_range_hand_targets_are_rejected(rig, hand, bad):
@@ -812,7 +713,7 @@ def test_out_of_range_hand_targets_are_rejected(rig, hand, bad):
             out.send_hand(bad, guard=allow)
     finally:
         out.close()
-    assert _calls(log, "hand_angle") == [] and _calls(log, "rtu_write") == []
+    assert _calls(log, "hand_angle") == []
 
 
 def test_hand_is_gated_separately_from_the_arm(rig):
@@ -836,13 +737,13 @@ def test_hand_is_gated_separately_from_the_arm(rig):
 
 def test_hand_write_failure_latches_and_blocks_the_arm(rig):
     build, _log = rig
-    out = _connected(build, fail={"rtu_write": -2})
+    out = _connected(build, fail={"hand_angle": -2})
     try:
-        out.configure_hand("rohand")
+        out.configure_hand("inspire")
         out.enable_hand()
         out.enable_motion()
-        with pytest.raises(RealManError, match="ROHand register write"):
-            out.send_hand(ROH_SIX, guard=allow)
+        with pytest.raises(RealManError, match="rm_set_hand_angle"):
+            out.send_hand(SIX, guard=allow)
         # A hand that stopped answering fails closed for everything.
         with pytest.raises(RealManError, match="faulted"):
             out.send_joints(np.zeros(7), guard=allow)
@@ -925,51 +826,6 @@ def test_arm_state_stores_landmarks_without_faking_wrist_freshness():
     state.update_from_pose((0, 0, 0), (0, 0, 0, 1))  # No tracker: ignored.
 
 
-# -- ROHand channel mapping ------------------------------------------------
-
-
-def _rohand_raw(**angles):
-    spec = RealManRM75BSingleROHandSpec()
-    names = [joint for joint, _o, _c in spec.rohand_channels] + ["if_slider_link"]
-    values = [angles.get(name, 0.0) for name in names]
-    return spec, values, names
-
-
-def test_rohand_mapping_reads_joints_by_name_in_register_order():
-    spec = RealManRM75BSingleROHandSpec()
-    opened = {joint: open_ for joint, open_, _c in spec.rohand_channels}
-    closed = {joint: closed_ for joint, _o, closed_ in spec.rohand_channels}
-    _spec, values, names = _rohand_raw(**opened)
-    assert raw_qpos_to_positions(values, names, spec) == [0] * 6
-    _spec, values, names = _rohand_raw(**closed)
-    assert raw_qpos_to_positions(values, names, spec) == [65535] * 6
-    # Shuffling the retarget output order must not change the result.
-    order = list(reversed(range(len(names))))
-    assert raw_qpos_to_positions(
-        [values[i] for i in order], [names[i] for i in order], spec
-    ) == [65535] * 6
-
-
-def test_rohand_mapping_clips_and_can_invert():
-    spec = RealManRM75BSingleROHandSpec()
-    beyond = {joint: closed_ * 3 if closed_ else 99.0 for joint, _o, closed_ in spec.rohand_channels}
-    _spec, values, names = _rohand_raw(**beyond)
-    positions = raw_qpos_to_positions(values, names, spec)
-    assert all(0 <= p <= 65535 for p in positions)
-    flipped = raw_qpos_to_positions(values, names, spec, closed_is_max=False)
-    assert [65535 - p for p in positions] == flipped
-
-
-def test_rohand_mapping_rejects_bad_input():
-    spec, values, names = _rohand_raw()
-    with pytest.raises(ValueError, match="no joint"):
-        raw_qpos_to_positions(values[1:], names[1:], spec)
-    with pytest.raises(ValueError, match="finite"):
-        raw_qpos_to_positions([float("nan")] * len(names), names, spec)
-    with pytest.raises(ValueError, match="matching"):
-        raw_qpos_to_positions(values[:-1], names, spec)
-
-
 # -- entrypoint modes ------------------------------------------------------
 
 
@@ -1006,7 +862,7 @@ class _FakeClock:
         self.now += seconds
 
 
-def _hand_args(hand="rohand", controller=False):
+def _hand_args(hand="inspire", controller=False):
     return entry.argparse.Namespace(
         config=ROOT / "config" / "realman_rm75b_single_real.yaml",
         hand=hand, input_source="pico4", avp_ip=None, port=9000,
@@ -1018,14 +874,14 @@ def test_hand_only_never_moves_the_arm():
     log = []
 
     def output_factory(ip):
-        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log), sdk_types=FakeTypes)
+        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log))
 
     def hand_driver_factory(output, args, spec, config):
         output.configure_hand(args.hand)
         output.enable_hand()
         return entry._HandDriver(
             retarget=lambda lm: lm, to_channels=lambda raw: list(raw),
-            send=lambda ch: output.send_hand(ch, guard=allow), full_scale=65535,
+            send=lambda ch: output.send_hand(ch, guard=allow), full_scale=1000,
             rate_hz=1000.0, min_change_fraction=0.0,
         )
 
@@ -1035,7 +891,7 @@ def test_hand_only_never_moves_the_arm():
             clock=_FakeClock(), hand_driver_factory=hand_driver_factory,
         )
     verbs = _verbs(log)
-    assert verbs.count("rtu_write") == 3  # Every landmark frame drove the hand.
+    assert verbs.count("hand_angle") == 3  # Every landmark frame drove the hand.
     for forbidden in ("movej", "canfd", "stop"):
         assert forbidden not in verbs
     assert verbs[-2:] == ["delete", "destroy"]
@@ -1045,12 +901,12 @@ def test_read_only_with_a_hand_writes_no_target():
     log = []
 
     def output_factory(ip):
-        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log), sdk_types=FakeTypes)
+        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log))
 
     assert entry.run_read_only(_hand_args(), output_factory=output_factory) == 0
     verbs = _verbs(log)
-    assert "voltage" in verbs and "rtu_read" in verbs
-    for forbidden in ("movej", "canfd", "stop", "hand_angle", "rtu_write", "v3_write"):
+    assert "voltage" in verbs
+    for forbidden in ("movej", "canfd", "stop", "hand_angle", "rs485_mode"):
         assert forbidden not in verbs
 
 
@@ -1058,7 +914,7 @@ def test_controller_mode_leaves_the_hand_untouched():
     log, built = [], []
 
     def output_factory(ip):
-        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log), sdk_types=FakeTypes)
+        return RM75BSingleOutput(ip, factory=lambda _ip: FakeArm(log))
 
     class _Clock(_FakeClock):
         def sleep(self, seconds):
@@ -1078,21 +934,21 @@ def test_controller_mode_leaves_the_hand_untouched():
             hand_driver_factory=lambda *a: built.append(a),
         )
     assert built == []  # The hand driver was never set up.
-    for verb in ("voltage", "rs485_mode", "modbus_mode", "hand_angle", "rtu_write", "v3_write"):
+    for verb in ("voltage", "rs485_mode", "hand_angle"):
         assert verb not in _verbs(log)
 
 
 def test_unguarded_main_cannot_reach_real_hardware():
     """Arguments that pass validation stop before connecting under test."""
-    assert entry.main(["--hand-only", "--hand", "rohand"]) == 1
+    assert entry.main(["--hand-only", "--hand", "inspire"]) == 1
 
 
 @pytest.mark.parametrize(
     "hands, match",
     [
-        ({"rohand": {"baudrate": 12345}}, "baudrate"),
-        ({"rohand": {"device_id": 0}}, "device_id"),
-        ({"rohand": {"closed_is_max": "yes"}}, "closed_is_max"),
+        ({"inspire": {"baudrate": 12345}}, "baudrate"),
+        ({"inspire": {"rate_hz": 0}}, "rate_hz"),
+        ({"rohand": {}}, "only contain"),
         ({"gripper": {}}, "only contain"),
     ],
 )
@@ -1112,8 +968,9 @@ def test_hand_cli_validation():
     # would run the real entrypoint.
     for argv in (
         ["--hand-only"],
-        ["--hand-only", "--hand", "rohand", "--controller"],
-        ["--hand-only", "--enable-motion", "--hand", "rohand"],
+        ["--hand-only", "--hand", "inspire", "--controller"],
+        ["--hand-only", "--enable-motion", "--hand", "inspire"],
+        ["--check", "--hand", "rohand"],  # ROHand is no longer a choice.
     ):
         with pytest.raises(SystemExit):
             entry.main(argv)

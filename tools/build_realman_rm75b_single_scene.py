@@ -2,7 +2,7 @@
 """Build the single-arm RealMan RM75-B MuJoCo scene.
 
 One RM75-B arm bolted to the floor, optionally with a right dexterous hand on
-the flange: ``--hand none`` (flange only), ``inspire`` or ``rohand``.
+the flange: ``--hand none`` (flange only) or ``inspire``.
 
 The source is the vendor's standalone single-arm package (``RM75-B.urdf``),
 not the dual-arm ``dual_75B_arm_robot`` xacro.  That matters for the flange:
@@ -50,30 +50,24 @@ SOURCE_URDF = ASSET_ROOT / "source" / "urdf" / "RM75-B.urdf"
 VISUAL_MESH_DIR = ASSET_ROOT / "meshes" / "visual"
 MESH_REL_DIR = "../../assets/arm_body/realman_rm75b_single/meshes/visual"
 
-# Hand sources. The Inspire subtree is lifted from the dual-arm scene, whose
-# mesh paths are already relative to example/scene_config. ROHand comes from
-# the vendor MJCF copied into assets/dex_hand/rohand.
+# The Inspire subtree is lifted from the dual-arm scene, whose mesh paths are
+# already relative to example/scene_config.
 DUAL_INSPIRE_SCENE = ROOT / "example" / "scene_config" / "scene_realman_rm75b_inspire.xml"
-ROHAND_MJCF = ROOT / "assets" / "dex_hand" / "rohand" / "rohand_right_mujoco.xml"
-ROHAND_MESH_REL_DIR = "../../assets/dex_hand/rohand"
 
 # Hand-base orientation on the flange. link_7 is already the flange face with
 # +Z as the tool axis, so -- unlike the dual-arm "0 0 0.03" / "0.5 -0.5 -0.5
 # 0.5", which only exists to undo that model's twisted r_link7 frame -- no
-# offset is needed. Each rotation takes the hand's own frame so that:
+# offset is needed. The rotation takes the hand's own frame so that:
 #   * the four fingers extend along flange +Z, and
 #   * the palm faces down (world -Z) at the home pose.
-# In their own base frames the fingers point -Y (Inspire) / -X (ROHand) and the
-# palm -- the side the fingertips move toward when closing -- faces -X
-# (Inspire) / -Z (ROHand). Change these to re-mount a hand rotated about the
-# tool axis; the builder re-checks the finger direction either way.
+# In its own base frame the fingers point -Y and the palm -- the side the
+# fingertips move toward when closing -- faces -X. Change this to re-mount the
+# hand rotated about the tool axis; the builder re-checks the finger direction.
 INSPIRE_MOUNT_QUAT = "0 0 -0.7071068 0.7071068"
-ROHAND_MOUNT_QUAT = "0 -0.7071068 0 0.7071068"
 HAND_FINGERTIPS = {
     "inspire": tuple(
         f"{HAND_PREFIX}{finger}_intermediate" for finger in ("index", "middle", "ring", "pinky")
     ),
-    "rohand": tuple(f"{HAND_PREFIX}{finger}_distal_link" for finger in ("if", "mf", "rf", "lf")),
 }
 
 BASE_LINK = "base_link"
@@ -141,60 +135,6 @@ def _graft_inspire(root: ET.Element, mount: ET.Element) -> list[ET.Element]:
         for act in source.find("actuator")
         if act.get("joint") in joints
     ]
-
-
-def _graft_rohand(root: ET.Element, mount: ET.Element) -> tuple[list[ET.Element], list[ET.Element]]:
-    """Attach the ROHand right hand; return its actuators and equality couplings.
-
-    Every name is prefixed: the vendor MJCF calls its root mesh "base_link",
-    which would collide with the arm's own base_link mesh.
-    """
-    source = ET.parse(ROHAND_MJCF).getroot()
-    mesh_dir = source.find("compiler").get("meshdir", "")
-    joint_default = source.find("default/joint")
-    damping = joint_default.get("damping") if joint_default is not None else None
-
-    hand = copy.deepcopy(_find_named(source, "body", "hand_root"))
-    hand.attrib.pop("pos", None)
-    hand.set("quat", ROHAND_MOUNT_QUAT)
-    for body in hand.iter("body"):
-        body.set("name", f"{HAND_PREFIX}{body.get('name')}")
-    for joint in hand.iter("joint"):
-        joint.set("name", f"{HAND_PREFIX}{joint.get('name')}")
-        # The vendor file sets damping through <default>; the scene has no
-        # such default, so carry it onto each joint explicitly.
-        if damping is not None and joint.get("damping") is None:
-            joint.set("damping", damping)
-    for geom in hand.iter("geom"):
-        if geom.get("mesh"):
-            geom.set("mesh", f"rohand_{geom.get('mesh')}")
-    mount.append(hand)
-
-    asset = root.find("asset")
-    for mesh in source.find("asset").findall("mesh"):
-        copied = copy.deepcopy(mesh)
-        copied.set("name", f"rohand_{mesh.get('name')}")
-        copied.set("file", f"{ROHAND_MESH_REL_DIR}/{mesh_dir}/{Path(mesh.get('file')).name}")
-        asset.append(copied)
-
-    equalities = []
-    for coupling in source.find("equality"):
-        copied = copy.deepcopy(coupling)
-        copied.set("name", f"{HAND_PREFIX}{coupling.get('name')}")
-        for key in ("joint1", "joint2"):
-            if copied.get(key):
-                copied.set(key, f"{HAND_PREFIX}{copied.get(key)}")
-        equalities.append(copied)
-
-    actuators = []
-    for act in source.find("actuator"):
-        copied = copy.deepcopy(act)
-        joint = f"{HAND_PREFIX}{act.get('joint')}"
-        copied.set("joint", joint)
-        # Named after the joint so TeleopArmController finds it by joint name.
-        copied.set("name", joint)
-        actuators.append(copied)
-    return actuators, equalities
 
 
 def _add_actuators(root: ET.Element, hand_actuators: list[ET.Element]) -> None:
@@ -297,11 +237,8 @@ def _assemble_scene(
     # The hand hangs off the mount; the IK target stays the flange TCP site,
     # so attaching a hand does not change how the arm moves.
     hand_actuators: list[ET.Element] = []
-    hand_equalities: list[ET.Element] = []
     if hand == "inspire":
         hand_actuators = _graft_inspire(root, mount)
-    elif hand == "rohand":
-        hand_actuators, hand_equalities = _graft_rohand(root, mount)
     elif hand != "none":
         raise ValueError(f"Unknown hand: {hand}")
 
@@ -327,8 +264,6 @@ def _assemble_scene(
             "conaffinity": "1",
         },
     )
-    if hand_equalities:
-        ET.SubElement(root, "equality").extend(hand_equalities)
     _add_actuators(root, hand_actuators)
     _write_xml(root, scene_path)
 
@@ -370,21 +305,6 @@ def _verify_geometry(model: mujoco.MjModel, data: mujoco.MjData) -> None:
     )
 
 
-def _satisfy_joint_couplings(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-    """Set each coupled joint from its source so the keyframe starts consistent.
-
-    ROHand drives its distal joints through polynomial equality constraints;
-    a keyframe that violates them would snap on the first physics step.
-    """
-    for eq in range(model.neq):
-        if model.eq_type[eq] != mujoco.mjtEq.mjEQ_JOINT:
-            continue
-        dependent, source = int(model.eq_obj1id[eq]), int(model.eq_obj2id[eq])
-        x = float(data.qpos[model.jnt_qposadr[source]])
-        coef = model.eq_data[eq, :5]
-        data.qpos[model.jnt_qposadr[dependent]] = sum(c * x**k for k, c in enumerate(coef))
-
-
 def _verify_hand_orientation(model: mujoco.MjModel, data: mujoco.MjData, hand: str) -> None:
     """Fingers must extend along the flange tool axis, not off to one side."""
     flange = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, FLANGE_BODY)
@@ -422,7 +342,6 @@ def _add_home_keyframe(scene_path: Path, hand: str) -> None:
     for index, value in enumerate(SINGLE_ARM_HOME_QPOS, 1):
         _set_joint_qpos(model, data, joint_name(index), value)
     # Hand joints stay at the model's rest pose (0, inside every hand range).
-    _satisfy_joint_couplings(model, data)
     mujoco.mj_forward(model, data)
     if hand != "none":
         _verify_hand_orientation(model, data, hand)
