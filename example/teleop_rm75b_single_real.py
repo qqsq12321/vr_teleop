@@ -56,6 +56,17 @@ GRIP_ENGAGE = 0.1
 HAND_RATE_HZ = 25.0
 HAND_MIN_CHANGE_FRACTION = 0.005
 
+# Self- and floor-collision avoidance (utils.core.capsule_collision). Inside
+# INFLUENCE the IK is pushed apart; below MARGIN the frame is not sent at all
+# and the arm holds its last command. The capsules are fitted conservatively, so both are
+# measured between capsule surfaces, a few centimetres outside the metal.
+COLLISION_INFLUENCE_M = 0.05
+COLLISION_MARGIN_M = 0.005
+# Solved joints stay this far inside the URDF limits (~3 deg).
+JOINT_LIMIT_MARGIN_RAD = 0.05
+# Halvings of a step that would cross the margin: 2**-8 of a 20 ms step.
+BACKSTOP_BISECT_STEPS = 8
+
 DEFAULT_CONFIG = ROOT / "config" / "realman_rm75b_single_real.yaml"
 # The lone arm is addressed as the right side throughout the stack.
 SIDE = "right"
@@ -289,6 +300,7 @@ def run_motion(args, *, output_factory=None, input_factory=None, clock=None,
     ctrl, inp = config["control"], config["input"]
     spec = _hand_spec(args)
     model, data, addresses = _load_model(spec)
+    collision = _CollisionBackstop(model, spec)
     controller_mode = bool(getattr(args, "controller", False))
     hand = getattr(args, "hand", "none")
 
@@ -424,9 +436,15 @@ def run_motion(args, *, output_factory=None, input_factory=None, clock=None,
                     data.qpos.copy(), rot_weight=ctrl["rot_weight"],
                     damping=ctrl["ik_damping"], current_q_weight=ctrl["ik_current_weight"],
                     home_qpos=arm.home, skip_tail_joints=0, dof_indices=addresses,
+                    collision=collision.capsules, joint_limit_margin=JOINT_LIMIT_MARGIN_RAD,
                 )
-                output.send_joints(q_sol[addresses], guard=_transport_guard, follow=ctrl["follow"])
-                data.qpos[addresses] = q_sol[addresses]
+                # The IK only steers softly; a target pulled hard enough can
+                # still land inside the margin. Never send such a frame: go
+                # only as far as the margin allows, or hold.
+                q_sol = collision.limit(data.qpos.copy(), q_sol)
+                if q_sol is not None:
+                    output.send_joints(q_sol[addresses], guard=_transport_guard, follow=ctrl["follow"])
+                    data.qpos[addresses] = q_sol[addresses]
 
             remaining = CONTROL_PERIOD_S - (clock.monotonic() - loop_start)
             if remaining > 0:
@@ -611,6 +629,76 @@ def _setup_hand(output, args, spec, config):
         full_scale=INSPIRE_CHANNEL_MAX,
         rate_hz=settings.get("rate_hz", HAND_RATE_HZ),
     )
+
+
+class _CollisionBackstop:
+    """Self- and floor-collision capsules for the IK, plus the hard check behind them.
+
+    The IK only steers away softly, so a target dragged deep enough can still
+    produce a pose inside the margin. ``limit`` then cuts the step short at the
+    margin instead of dropping the frame: the arm keeps moving up to the
+    boundary, and from there the IK's soft push slides it along the obstacle
+    rather than leaving it frozen until the operator backs out.
+    """
+
+    def __init__(self, model, spec, *, emit=print, clock=time):
+        import mujoco
+
+        from utils.core.capsule_collision import CapsuleSet
+
+        self._mujoco = mujoco
+        self.model = model
+        self.capsules = CapsuleSet(
+            model, spec.collision_chain, hand=spec.collision_hand,
+            influence=COLLISION_INFLUENCE_M, margin=COLLISION_MARGIN_M,
+            floor_z=spec.collision_floor_z,
+        )
+        self._data = mujoco.MjData(model)
+        self._emit = emit
+        self._clock = clock
+        self._last_warned = None
+
+    def clearance(self, qpos):
+        self._data.qpos[:] = qpos
+        self._mujoco.mj_kinematics(self.model, self._data)
+        return self.capsules.min_clearance(self._data)
+
+    def limit(self, q_from, q_to):
+        """The furthest joint pose from ``q_from`` toward ``q_to`` that keeps the
+        margin, or None to hold. ``q_from`` is the last pose sent.
+
+        A ``q_to`` outside the margin passes unchanged. So does one that is
+        inside but further out than ``q_from`` was, which lets an arm that
+        starts inside (from its measured pose) work its way out. Otherwise the
+        straight joint-space step is bisected down to the margin.
+        """
+        margin = self.capsules.margin
+        to_clearance, pair = self.clearance(q_to)
+        if to_clearance >= margin:
+            return q_to
+        from_clearance, _pair = self.clearance(q_from)
+        if to_clearance > from_clearance:
+            return q_to
+        safe = 0.0
+        if from_clearance >= margin:
+            unsafe = 1.0
+            for _ in range(BACKSTOP_BISECT_STEPS):
+                mid = 0.5 * (safe + unsafe)
+                if self.clearance(q_from + mid * (q_to - q_from))[0] >= margin:
+                    safe = mid
+                else:
+                    unsafe = mid
+        self._warn(
+            f"{'Limiting' if safe > 0.0 else 'Holding'}: {pair[0]} / {pair[1]} would "
+            f"come within {to_clearance * 1000:.0f} mm (margin {margin * 1000:.0f} mm)."
+        )
+        return q_from + safe * (q_to - q_from) if safe > 0.0 else None
+
+    def _warn(self, message):
+        now = self._clock.monotonic()
+        if self._last_warned is None or now - self._last_warned > 1.0:
+            self._emit(message)
+            self._last_warned = now
 
 
 class _ArmState:

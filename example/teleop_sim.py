@@ -241,6 +241,33 @@ def _controller_kwargs(spec, side: str, robot_label: str) -> dict:
     }
 
 
+# Same avoidance settings as the single-arm real entrypoint, so what the sim
+# shows is what the hardware will do.
+_COLLISION_INFLUENCE_M = 0.05
+_COLLISION_MARGIN_M = 0.005
+_JOINT_LIMIT_MARGIN_RAD = 0.05
+
+
+def _collision_kwargs(model, spec) -> dict:
+    """Self- and floor-collision avoidance for robots that declare capsules.
+
+    Only the single-arm RM75-B opts in; every other robot's IK is unchanged.
+    """
+    chain = getattr(spec, "collision_chain", None)
+    if not chain:
+        return {}
+    from utils.core.capsule_collision import CapsuleSet
+
+    return {
+        "collision": CapsuleSet(
+            model, chain, hand=getattr(spec, "collision_hand", None),
+            influence=_COLLISION_INFLUENCE_M, margin=_COLLISION_MARGIN_M,
+            floor_z=getattr(spec, "collision_floor_z", None),
+        ),
+        "joint_limit_margin": _JOINT_LIMIT_MARGIN_RAD,
+    }
+
+
 def _run_bimanual(args: argparse.Namespace) -> None:
     spec = _ROBOT_HAND_SPECS[(args.robot, args.hand)]
     robot_label = _robot_label(args)
@@ -272,6 +299,7 @@ def _run_bimanual(args: argparse.Namespace) -> None:
             hand_config=_resolve_hand_config(args, spec, side=side),
             hand_type=spec.hand_type,
             **_controller_kwargs(spec, side, robot_label),
+            **_collision_kwargs(model, spec),
         )
         for side in sides
     }

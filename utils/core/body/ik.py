@@ -8,6 +8,41 @@ import numpy as np
 from utils.core.quaternion import quaternion_to_matrix
 
 
+def _collision_rows(model, workspace, collision):
+    """Soft avoidance rows from an optional collision model (empty when off).
+
+    ``workspace`` must already hold the current iteration's kinematics.
+    """
+    if collision is None:
+        return np.zeros(0), np.zeros((0, model.nv))
+    return collision.constraint_rows(model, workspace)
+
+
+def _not_converged_by_collision(c_err, tol):
+    # A pose that meets its target is not done while a pair still sits inside
+    # the influence distance: stopping there would skip the push entirely.
+    return c_err.size > 0 and float(np.max(c_err)) > tol
+
+
+def _clamp_to_joint_limits(model, q, dof_indices, margin):
+    """Keep solved joints inside their range, ``margin`` short of each stop.
+
+    mj_integratePos does not clamp hinge joints, so without this the solver
+    happily returns angles past the hardware limits.
+    """
+    selected = None if dof_indices is None else {int(i) for i in dof_indices}
+    for jid in range(model.njnt):
+        if not model.jnt_limited[jid] or model.jnt_type[jid] not in (
+            mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE,
+        ):
+            continue
+        adr = int(model.jnt_qposadr[jid])
+        if selected is not None and adr not in selected:
+            continue
+        lower, upper = model.jnt_range[jid]
+        q[adr] = min(max(q[adr], lower + margin), upper - margin)
+
+
 def solve_position_ik(
     model: mujoco.MjModel,
     workspace: mujoco.MjData,
@@ -53,8 +88,16 @@ def solve_pose_ik(
     skip_tail_joints: int = 2,
     damping: float = 1e-3,
     dof_indices: np.ndarray | None = None,
+    collision=None,
+    joint_limit_margin: float | None = None,
 ) -> np.ndarray:
-    """Levenberg-Marquardt IK for a site pose (position + orientation)."""
+    """Levenberg-Marquardt IK for a site pose (position + orientation).
+
+    Both extras are off by default, leaving existing callers unchanged.
+    ``collision`` supplies soft rows (``constraint_rows(model, data)``) that
+    steer the arm away from whatever it models; ``joint_limit_margin`` clamps
+    every solved joint that far inside its range after each step.
+    """
     q = np.asarray(q_init, dtype=np.float64).copy()
     target_rot = np.asarray(quaternion_to_matrix(target_quat), dtype=np.float64)
 
@@ -82,7 +125,8 @@ def solve_pose_ik(
         err_pos = target_pos - current_pos
         rot_err = _rotation_error(target_rot, current_rot)
         err = np.hstack([err_pos, rot_weight * rot_err])
-        if np.linalg.norm(err) < tol:
+        c_err, c_jac = _collision_rows(model, workspace, collision)
+        if np.linalg.norm(err) < tol and not _not_converged_by_collision(c_err, tol):
             break
 
         jacp = np.zeros((3, model.nv))
@@ -177,6 +221,15 @@ def solve_pose_ik(
                 err = np.hstack([err, err_curr])
                 jac = np.vstack([jac, jac_curr])
 
+        if c_err.size:
+            c_jac = c_jac.copy()
+            if dof_indices is not None:
+                active = np.zeros(model.nv, dtype=bool)
+                active[dof_indices] = True
+                c_jac[:, ~active] = 0.0
+            err = np.hstack([err, c_err])
+            jac = np.vstack([jac, c_jac])
+
         JJ = jac @ jac.T + damping * np.eye(jac.shape[0])
         dq = jac.T @ np.linalg.solve(JJ, err)
         
@@ -188,6 +241,8 @@ def solve_pose_ik(
         
         # Update q using integratePos to handle free joints correctly (even if we don't move them)
         mujoco.mj_integratePos(model, q, dq, 1.0)
+        if joint_limit_margin is not None:
+            _clamp_to_joint_limits(model, q, dof_indices, joint_limit_margin)
     return q
 
 
@@ -207,8 +262,16 @@ def solve_body_pose_ik(
     current_q_weight: float = 0.0,
     damping: float = 1e-3,
     dof_indices: np.ndarray | None = None,
+    collision=None,
+    joint_limit_margin: float | None = None,
 ) -> np.ndarray:
-    """Levenberg-Marquardt IK for a body pose (position + orientation)."""
+    """Levenberg-Marquardt IK for a body pose (position + orientation).
+
+    Both extras are off by default, leaving existing callers unchanged.
+    ``collision`` supplies soft rows (``constraint_rows(model, data)``) that
+    steer the arm away from whatever it models; ``joint_limit_margin`` clamps
+    every solved joint that far inside its range after each step.
+    """
     q = np.asarray(q_init, dtype=np.float64).copy()
     target_rot = np.asarray(quaternion_to_matrix(target_quat), dtype=np.float64)
 
@@ -230,7 +293,8 @@ def solve_body_pose_ik(
         err_pos = target_pos - current_pos
         rot_err = _rotation_error(target_rot, current_rot)
         err = np.hstack([err_pos, rot_weight * rot_err])
-        if np.linalg.norm(err) < tol:
+        c_err, c_jac = _collision_rows(model, workspace, collision)
+        if np.linalg.norm(err) < tol and not _not_converged_by_collision(c_err, tol):
             break
 
         jacp = np.zeros((3, model.nv))
@@ -280,6 +344,15 @@ def solve_body_pose_ik(
                 err = np.hstack([err, err_curr])
                 jac = np.vstack([jac, jac_curr])
 
+        if c_err.size:
+            c_jac = c_jac.copy()
+            if dof_indices is not None:
+                active = np.zeros(model.nv, dtype=bool)
+                active[dof_indices] = True
+                c_jac[:, ~active] = 0.0
+            err = np.hstack([err, c_err])
+            jac = np.vstack([jac, c_jac])
+
         JJ = jac @ jac.T + damping * np.eye(jac.shape[0])
         dq = jac.T @ np.linalg.solve(JJ, err)
         if dof_indices is not None:
@@ -287,6 +360,8 @@ def solve_body_pose_ik(
         elif n_robot < model.nv:
             dq[n_robot:] = 0.0
         mujoco.mj_integratePos(model, q, dq, 1.0)
+        if joint_limit_margin is not None:
+            _clamp_to_joint_limits(model, q, dof_indices, joint_limit_margin)
     return q
 
 

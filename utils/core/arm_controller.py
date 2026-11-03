@@ -62,6 +62,8 @@ class TeleopArmController:
         rotation_deadband_deg: float = 0.0,
         pos_gain: float | None = None,
         rot_gain: float | None = None,
+        collision=None,
+        joint_limit_margin: float | None = None,
     ):
         self.model = model
         self.data = data
@@ -72,6 +74,10 @@ class TeleopArmController:
         self.hand_type = hand_type
         self.pos_gain = pos_gain
         self.rot_gain = rot_gain
+        # Optional self-collision avoidance and joint-limit clamping for the
+        # IK; both off unless a robot opts in.
+        self.collision = collision
+        self.joint_limit_margin = joint_limit_margin
 
         if ee_body_name is None:
             ee_body_name = f"{side}_j7"
@@ -266,6 +272,8 @@ class TeleopArmController:
             current_q_weight=self.args.ik_current_weight,
             dof_indices=self.arm_dof_indices,
             home_qpos=self.arm_home_qpos,
+            collision=self.collision,
+            joint_limit_margin=self.joint_limit_margin,
         )
 
     def write_solution_to_data(self, q_sol: np.ndarray, *, include_hand: bool = True) -> None:

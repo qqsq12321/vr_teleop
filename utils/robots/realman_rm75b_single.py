@@ -94,6 +94,16 @@ class RealManRM75BSingleSpec:
     torso_home_qpos: tuple[float, ...] = ()
     head_home_qpos: tuple[float, ...] = ()
     hand_qpos_mapping: tuple[int, ...] | None = None
+    # Collision capsules (utils.core.capsule_collision): one per link
+    # from base to flange, plus an envelope around the hand's root body.
+    collision_chain: tuple[str, ...] = ("base_link",) + tuple(
+        f"link_{i}" for i in range(1, ARM_JOINT_COUNT + 1)
+    )
+    collision_hand: str | None = None
+    # World height of the floor the base stands on (the scene's floor plane);
+    # None turns floor avoidance off. Raise it if the arm sits on a pedestal
+    # lower than its surroundings, e.g. next to a table it must not hit.
+    collision_floor_z: float | None = 0.0
 
     def _check_side(self, side: str) -> None:
         if side not in self.sides:
@@ -156,6 +166,7 @@ class RealManRM75BSingleInspireSpec(RealManRM75BSingleSpec):
     inspire_channel_indices: tuple[int, ...] = _DUAL_INSPIRE.inspire_channel_indices
     inspire_channel_max_rad: tuple[float, ...] = _DUAL_INSPIRE.inspire_channel_max_rad
     inspire_channel_invert: tuple[bool, ...] = _DUAL_INSPIRE.inspire_channel_invert
+    collision_hand: str | None = f"{HAND_PREFIX}hand_base_link"
 
 
 HAND_SPECS = {
