@@ -247,8 +247,9 @@ def test_teleop_registration_defaults_single_arm_to_no_hand(
     assert teleop_sim._normalize_hand("realman_rm75b_single", "none") == "none"
     registered = teleop_sim._ROBOT_HAND_SPECS[("realman_rm75b_single", "none")]
     assert registered.scene_path == spec.scene_path
+    # Inspire and ROHand are supported; hands with no single-arm scene are not.
     with pytest.raises(ValueError, match="does not support hand"):
-        teleop_sim._normalize_hand("realman_rm75b_single", "inspire")
+        teleop_sim._normalize_hand("realman_rm75b_single", "linker_l20")
 
 
 def test_arm_selection_narrows_to_the_available_side(
@@ -264,3 +265,156 @@ def test_arm_selection_narrows_to_the_available_side(
     dual = teleop_sim._REALMAN_RM75B_SPEC
     assert teleop_sim._resolve_sides(dual, "both") == ("left", "right")
     assert teleop_sim._resolve_sides(dual, "left") == ("left",)
+
+
+# -- dexterous hands -------------------------------------------------------
+
+from utils.robots.realman_rm75b import RealManRM75BInspireSpec  # noqa: E402
+from utils.robots.realman_rm75b_single import (  # noqa: E402
+    HAND_PREFIX,
+    HAND_SPECS,
+    ROHAND_JOINT_NAMES,
+    RealManRM75BSingleInspireSpec,
+    RealManRM75BSingleROHandSpec,
+)
+
+ANYDEX_ROOT = ROOT / "third_party" / "AnyDexRetarget"
+# (nq, nu, equality constraints): ROHand drives its five distal joints through
+# equality couplings rather than actuators.
+HAND_DIMENSIONS = {"inspire": (19, 19, 0), "rohand": (32, 27, 5)}
+FINGERTIPS = {
+    "inspire": [f"right_{f}_intermediate" for f in ("index", "middle", "ring", "pinky")],
+    "rohand": [f"right_{f}_distal_link" for f in ("if", "mf", "rf", "lf")],
+}
+# Moving each finger's proximal joint in its closing direction. Inspire closes
+# toward positive angles, ROHand toward negative ones (see ROHAND_CHANNELS).
+CLOSE_FINGERS = {
+    "inspire": [(f"right_{f}_proximal_joint", 1.2) for f in ("index", "middle", "ring", "pinky")],
+    "rohand": [(f"right_{f}_proximal_link", -1.5) for f in ("if", "mf", "rf", "lf")],
+}
+
+
+@pytest.fixture(scope="module", params=["inspire", "rohand"])
+def hand_rig(request):
+    spec = HAND_SPECS[request.param]()
+    return request.param, spec, mujoco.MjModel.from_xml_path(str(spec.scene_path))
+
+
+def _fingertip_centre(model, data, hand):
+    return np.mean([data.xpos[model.body(name).id] for name in FINGERTIPS[hand]], axis=0)
+
+
+def test_hand_scene_dimensions(hand_rig):
+    hand, _spec, model = hand_rig
+    nq, nu, neq = HAND_DIMENSIONS[hand]
+    assert (model.nq, model.nv, model.nu, model.neq) == (nq, nq, nu, neq)
+
+
+def test_every_hand_joint_is_driven_or_coupled(hand_rig):
+    _hand, spec, model = hand_rig
+    coupled = {int(model.eq_obj1id[i]) for i in range(model.neq)}
+    for name in spec.hand_joint_names("right"):
+        joint_id = _object_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        has_actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name) != -1
+        assert has_actuator or joint_id in coupled, name
+
+
+def test_hand_does_not_change_the_arm(hand_rig):
+    """The IK target stays on the flange, so a hand must not move the arm."""
+    _hand, _spec, model = hand_rig
+    bare = mujoco.MjModel.from_xml_path(str(SCENE))
+    with_hand, without = _home_data(model), _home_data(bare)
+    np.testing.assert_allclose(with_hand.qpos[:ARM_JOINT_COUNT], without.qpos[:ARM_JOINT_COUNT])
+    for name in (FLANGE_BODY, "link_7"):
+        np.testing.assert_allclose(
+            with_hand.xpos[model.body(name).id], without.xpos[bare.body(name).id], atol=1e-9
+        )
+
+
+def test_hand_keyframe_is_in_range_and_consistent(hand_rig):
+    _hand, spec, model = hand_rig
+    data = _home_data(model)
+    key_id = _object_id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    for name in spec.hand_joint_names("right"):
+        joint_id = _object_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        value = data.qpos[model.jnt_qposadr[joint_id]]
+        lower, upper = model.jnt_range[joint_id]
+        assert lower <= value <= upper, name
+        actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+        if actuator_id != -1:
+            assert model.key_ctrl[key_id, actuator_id] == pytest.approx(value)
+    # ROHand: the keyframe already satisfies the distal couplings, so the first
+    # physics step does not snap the fingers.
+    for eq in range(model.neq):
+        dependent, source = int(model.eq_obj1id[eq]), int(model.eq_obj2id[eq])
+        x = data.qpos[model.jnt_qposadr[source]]
+        expected = sum(c * x**k for k, c in enumerate(model.eq_data[eq, :5]))
+        assert data.qpos[model.jnt_qposadr[dependent]] == pytest.approx(expected, abs=1e-9)
+
+
+def test_fingers_extend_along_the_flange_and_palm_faces_down(hand_rig):
+    hand, _spec, model = hand_rig
+    data = _home_data(model)
+    flange = model.body(FLANGE_BODY).id
+    tool_axis = data.xmat[flange].reshape(3, 3)[:, 2]
+    reach = _fingertip_centre(model, data, hand) - data.xpos[flange]
+    assert reach @ tool_axis / np.linalg.norm(reach) > 0.95
+
+    # Closing the fingers curls the tips toward the palm, which should be down.
+    open_tips = _fingertip_centre(model, data, hand)
+    for name, value in CLOSE_FINGERS[hand]:
+        data.qpos[model.jnt_qposadr[model.joint(name).id]] = value
+    mujoco.mj_forward(model, data)
+    curl = _fingertip_centre(model, data, hand) - open_tips
+    assert curl[2] < 0.0
+
+
+def test_hand_scene_is_portable(hand_rig):
+    _hand, spec, _model = hand_rig
+    text = Path(spec.scene_path).read_text()
+    assert "/home/" not in text and "下载" not in text
+    root = ET.fromstring(text)
+    for mesh in root.findall("./asset/mesh"):
+        assert (Path(spec.scene_path).parent / mesh.get("file")).resolve().is_file()
+
+
+@pytest.mark.parametrize("source", ["pico4", "avp", "quest3"])
+def test_hand_retarget_configs_exist(hand_rig, source):
+    _hand, spec, _model = hand_rig
+    assert spec.hand_config_path(source, "right").is_file()
+
+
+def test_inspire_reuses_the_dual_arm_mapping():
+    single, dual = RealManRM75BSingleInspireSpec(), RealManRM75BInspireSpec()
+    assert single.hand_qpos_mapping == dual.hand_qpos_mapping
+    assert single.inspire_channel_indices == dual.inspire_channel_indices
+    assert single.hand_joint_names("right") == dual.hand_joint_names("right")
+
+
+def test_rohand_mapping_matches_the_retargeter_by_name():
+    """The permutation is a magic list; re-derive it from joint names."""
+    import sys
+
+    sys.path.insert(0, str(ANYDEX_ROOT))
+    try:
+        from anydexretarget import Retargeter
+    finally:
+        sys.path.pop(0)
+    spec = RealManRM75BSingleROHandSpec()
+    retargeter = Retargeter.from_yaml(str(spec.hand_config_path("pico4", "right")), "right")
+    urdf_order = list(retargeter.optimizer.robot.dof_joint_names)
+    scene_order = [name.removeprefix(HAND_PREFIX) for name in spec.hand_joint_names("right")]
+    assert scene_order == list(ROHAND_JOINT_NAMES)
+    assert [urdf_order[i] for i in spec.hand_qpos_mapping] == scene_order
+    # Every motor channel reads a joint the retargeter actually emits.
+    for joint, _open, _closed in spec.rohand_channels:
+        assert joint in urdf_order
+
+
+def test_teleop_sim_registers_both_hands():
+    for hand, cls in (("inspire", RealManRM75BSingleInspireSpec), ("rohand", RealManRM75BSingleROHandSpec)):
+        assert teleop_sim._normalize_hand("realman_rm75b_single", hand) == hand
+        assert isinstance(teleop_sim._ROBOT_HAND_SPECS[("realman_rm75b_single", hand)], cls)
+    assert teleop_sim._normalize_hand("realman_rm75b_single", "oymotion") == "rohand"
+    # The arm-only default is unchanged.
+    assert teleop_sim._normalize_hand("realman_rm75b_single", None) == "none"

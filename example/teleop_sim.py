@@ -40,7 +40,11 @@ from utils.robots.dexforce import DexForceSpec
 from utils.robots.galbot import GalbotInspireSpec
 from utils.robots.realman_rm75b import RealManRM75BInspireSpec
 from utils.robots.realman_rm75b_l20 import RealManRM75BL20Spec
-from utils.robots.realman_rm75b_single import RealManRM75BSingleSpec
+from utils.robots.realman_rm75b_single import (
+    RealManRM75BSingleInspireSpec,
+    RealManRM75BSingleROHandSpec,
+    RealManRM75BSingleSpec,
+)
 
 # ---------------------------------------------------------------------------
 # Scene / config paths
@@ -51,6 +55,8 @@ _GALBOT_SPEC = GalbotInspireSpec()
 _REALMAN_RM75B_SPEC = RealManRM75BInspireSpec()
 _REALMAN_RM75B_L20_SPEC = RealManRM75BL20Spec()
 _REALMAN_RM75B_SINGLE_SPEC = RealManRM75BSingleSpec()
+_REALMAN_RM75B_SINGLE_INSPIRE_SPEC = RealManRM75BSingleInspireSpec()
+_REALMAN_RM75B_SINGLE_ROHAND_SPEC = RealManRM75BSingleROHandSpec()
 _CVTE_CARM_D3_SPEC = CVTECArmD3Spec()
 
 
@@ -67,6 +73,9 @@ _HAND_ALIASES = {
     "linker": "linker_l20",
     "linker_l20": "linker_l20",
     "gripper": "gripper",
+    # OYMotion (傲意) ROHand.
+    "rohand": "rohand",
+    "oymotion": "rohand",
     # Arm-only: teleoperation drives the flange and nothing beyond it.
     "none": "none",
 }
@@ -76,6 +85,8 @@ _ROBOT_HAND_SPECS = {
     ("realman_rm75b", "inspire"): _REALMAN_RM75B_SPEC,
     ("realman_rm75b", "linker_l20"): _REALMAN_RM75B_L20_SPEC,
     ("realman_rm75b_single", "none"): _REALMAN_RM75B_SINGLE_SPEC,
+    ("realman_rm75b_single", "inspire"): _REALMAN_RM75B_SINGLE_INSPIRE_SPEC,
+    ("realman_rm75b_single", "rohand"): _REALMAN_RM75B_SINGLE_ROHAND_SPEC,
     ("cvte", "gripper"): _CVTE_CARM_D3_SPEC,
 }
 _ALL_SIDES = ("left", "right")
@@ -408,7 +419,8 @@ def main() -> None:
             "inspire for galbot/realman_rm75b, gripper for cvte "
             "(a single-DOF parallel gripper driven by VR pinch distance, not "
             "AnyDexRetarget), and none for realman_rm75b_single (arm only). "
-            "realman_rm75b also accepts linker_l20."
+            "realman_rm75b also accepts linker_l20; realman_rm75b_single also "
+            "accepts inspire and rohand (OYMotion)."
         ),
     )
     parser.add_argument(

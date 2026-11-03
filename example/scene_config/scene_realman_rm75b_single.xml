@@ -11,6 +11,9 @@
     <default class="realman_arm">
       <position kp="500" kv="70" forcerange="-60 60" />
     </default>
+    <default class="realman_hand">
+      <position kp="5" kv="0.35" forcerange="-5 5" />
+    </default>
   </default>
   <asset>
     <mesh name="base_link" file="../../assets/arm_body/realman_rm75b_single/meshes/visual/base_link.STL" />
