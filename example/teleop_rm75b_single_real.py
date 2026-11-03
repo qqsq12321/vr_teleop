@@ -8,14 +8,19 @@ Three modes, safest first:
     --read-only    Connects and prints measured joint angles. Never enables
                    motion and never sends a motion command.
     --enable-motion  Full teleoperation. The arm WILL move.
+    --hand-only    Drives only the --hand on the tool port; the arm is
+                   connected but never enabled.
 
 Run --read-only first on a new installation to confirm the measured joint
-angles look right before the arm is allowed to move.
+angles look right before the arm is allowed to move, and --hand-only before a
+hand is driven together with the arm.
 
 Examples:
     python example/teleop_rm75b_single_real.py --check
     python example/teleop_rm75b_single_real.py --read-only --duration 10
     python example/teleop_rm75b_single_real.py --enable-motion --input-source pico4
+    python example/teleop_rm75b_single_real.py --hand-only --hand rohand
+    python example/teleop_rm75b_single_real.py --enable-motion --hand inspire
 """
 
 from __future__ import annotations
@@ -32,13 +37,24 @@ sys.path.insert(0, str(ROOT))
 
 CONTROL_PERIOD_S = 0.02
 PACKET_TIMEOUT_S = 0.25
-POSITION_DEADBAND = 0.03
-ROTATION_DEADBAND_DEG = 8.0
+POSITION_DEADBAND = 0.02
+ROTATION_DEADBAND_DEG = 5.0
 
 # Countdown after the homing move completes, before the anchor is taken. The
 # daemon streams continuously, so without this the first tracked frame becomes
 # the anchor -- typically with a hand still on the keyboard after a restart.
 COUNTDOWN_S = 3
+
+# Grip travel past which the controller clutch counts as held. Matches the
+# dual-arm entrypoint so the two feel the same.
+GRIP_ENGAGE = 0.1
+
+# Hand commands go through the controller's tool port, and every write is a
+# blocking round trip. Sending one per 20 ms arm cycle would stretch the arm
+# loop and bring back the jitter, so hand targets are rate limited and skipped
+# when they have not moved by more than a small fraction of full scale.
+HAND_RATE_HZ = 25.0
+HAND_MIN_CHANGE_FRACTION = 0.005
 
 DEFAULT_CONFIG = ROOT / "config" / "realman_rm75b_single_real.yaml"
 # The lone arm is addressed as the right side throughout the stack.
@@ -80,7 +96,32 @@ def load_config(config_path):
     missing = required_control - set(config["control"])
     if missing:
         raise ValueError(f"control section is missing {sorted(missing)}")
+
+    # Optional per-hand transport settings. Supply voltage is deliberately not
+    # configurable here: it is read, never set.
+    hands = config.setdefault("hands", {})
+    if not isinstance(hands, dict) or not set(hands) <= {"inspire", "rohand"}:
+        raise ValueError("hands section may only contain inspire and rohand")
+    for name, settings in hands.items():
+        if not isinstance(settings, dict):
+            raise ValueError(f"hands.{name} must be a mapping")
+        if settings.get("baudrate", 115200) not in (9600, 115200, 460800):
+            raise ValueError(f"hands.{name}.baudrate must be 9600, 115200 or 460800")
+        rate = settings.get("rate_hz", HAND_RATE_HZ)
+        if type(rate) not in (int, float) or not 0 < rate <= 100:
+            raise ValueError(f"hands.{name}.rate_hz must be in (0, 100]")
+    rohand = hands.get("rohand", {})
+    if not 1 <= int(rohand.get("device_id", 2)) <= 247:
+        raise ValueError("hands.rohand.device_id must be a Modbus address 1..247")
+    if type(rohand.get("closed_is_max", True)) is not bool:
+        raise ValueError("hands.rohand.closed_is_max must be boolean")
     return config
+
+
+def _hand_spec(args):
+    from utils.robots.realman_rm75b_single import HAND_SPECS
+
+    return HAND_SPECS[getattr(args, "hand", "none")]()
 
 
 def _load_model(spec):
@@ -99,16 +140,15 @@ def run_check(args) -> int:
     """Offline validation. Opens no sockets and loads no vendor SDK."""
     import numpy as np
 
-    from utils.robots.realman_rm75b_single import RealManRM75BSingleSpec
-
     config = load_config(args.config)
-    spec = RealManRM75BSingleSpec()
+    spec = _hand_spec(args)
     model, _data, addresses = _load_model(spec)
 
     home = spec.arm_home_qpos(SIDE)
     print(f"Arm IP (not contacted): {config['network']['right_ip']}")
     print(f"Scene: {spec.scene_path.relative_to(ROOT)}")
     print(f"Model DoF: nq={model.nq} nv={model.nv} nu={model.nu}")
+    print(f"Hand: {args.hand} ({len(spec.hand_joint_names(SIDE))} joints)")
 
     import mujoco
 
@@ -138,13 +178,12 @@ def run_check(args) -> int:
 
 
 def run_read_only(args, *, output_factory=None) -> int:
-    """Connect and print measured joint angles. Sends no motion commands."""
+    """Connect and print measured state. Sends no motion and no hand target."""
     import numpy as np
 
-    from utils.robots.realman_rm75b_single import RealManRM75BSingleSpec
-
     config = load_config(args.config)
-    spec = RealManRM75BSingleSpec()
+    spec = _hand_spec(args)
+    hand = getattr(args, "hand", "none")
 
     if output_factory is None:
         from utils.adapters.output.realman_rm75b_single_real import RM75BSingleOutput
@@ -157,10 +196,27 @@ def run_read_only(args, *, output_factory=None) -> int:
     try:
         feedback = output.connect()
         print("READ-ONLY. Motion is not enabled; no motion command will be sent.", flush=True)
+        print(f"Controller generation: {output.controller_version}", flush=True)
         print(f"Home pose for reference (deg): {np.rad2deg(home).round(2).tolist()}", flush=True)
+        reads_hand = False
+        if hand != "none":
+            print(f"Tool port supply: {output.tool_voltage()}", flush=True)
+            if hand == "rohand":
+                # Reading ROHand needs the port in Modbus mode. That is port
+                # configuration only; no finger target is ever written here.
+                settings = config["hands"].get("rohand", {})
+                output.configure_hand(
+                    "rohand",
+                    baudrate=settings.get("baudrate", 115200),
+                    device_id=settings.get("device_id", 2),
+                )
+                reads_hand = True
         while True:
             degrees = np.rad2deg(feedback.q_rad)
-            print(f"measured (deg): {degrees.round(2).tolist()}", flush=True)
+            line = f"measured (deg): {degrees.round(2).tolist()}"
+            if reads_hand:
+                line += f"  ROHand pos: {output.read_hand()}"
+            print(line, flush=True)
             if deadline is not None and time.monotonic() >= deadline:
                 break
             time.sleep(0.5)
@@ -171,18 +227,76 @@ def run_read_only(args, *, output_factory=None) -> int:
     return 0
 
 
-def run_motion(args, *, output_factory=None, input_factory=None, clock=None) -> int:
+def _open_input_stream(args, inp, input_factory=None):
+    if input_factory is None:
+        from utils.core.input_stream import TeleopInputStream
+
+        input_factory = TeleopInputStream
+    return input_factory(argparse.Namespace(
+        input_source=args.input_source, avp_ip=args.avp_ip, port=args.port,
+        pico4_mode=inp.get("mode", "relay"),
+        pico4_relay_host=inp.get("relay_host", "127.0.0.1"),
+        pico4_relay_port=inp.get("relay_port", 63902),
+        pico4_port=inp.get("direct_port", 63901),
+        pico4_broadcast_port=inp.get("broadcast_port", 29888),
+    ))
+
+
+def run_hand_only(args, *, output_factory=None, input_factory=None, clock=None,
+                  hand_driver_factory=None) -> int:
+    """Drive only the hand. The arm is connected but never enabled.
+
+    The safe first power-up for a hand: its open/close direction and finger
+    order can be checked without the arm being able to move at all.
+    """
+    clock = time if clock is None else clock
+    if output_factory is None:
+        from utils.adapters.output.realman_rm75b_single_real import RM75BSingleOutput
+
+        output_factory = RM75BSingleOutput
+
+    config = load_config(args.config)
+    spec = _hand_spec(args)
+    output, input_stream = None, None
+    try:
+        output = output_factory(config["network"]["right_ip"])
+        output.connect()
+        hand_driver = (hand_driver_factory or _setup_hand)(output, args, spec, config)
+        input_stream = _open_input_stream(args, config["input"], input_factory)
+        # Only landmarks are used; no tracker, so the wrist pose is ignored.
+        state = _ArmState(tracker=None, site_id=None, ik_data=None,
+                          cmd_pos=None, cmd_quat=None, home=None)
+        print("HAND ONLY. The arm is not enabled and will not move. Ctrl+C stops.", flush=True)
+        while True:
+            loop_start = clock.monotonic()
+            result = input_stream.poll_arms(None, state, None, allow_stop_gesture=True)
+            if result.stop_requested:
+                raise KeyboardInterrupt
+            hand_driver.step(state.latest_landmarks, loop_start)
+            remaining = CONTROL_PERIOD_S - (clock.monotonic() - loop_start)
+            if remaining > 0:
+                clock.sleep(remaining)
+    finally:
+        try:
+            if output is not None:
+                output.close()
+        finally:
+            if input_stream is not None:
+                input_stream.close()
+
+
+def run_motion(args, *, output_factory=None, input_factory=None, clock=None,
+               hand_driver_factory=None) -> int:
     """Full teleoperation. The arm moves."""
     sys.path.insert(1, str(ROOT / "third_party" / "AnyDexRetarget"))
     import mujoco
     import numpy as np
 
+    from utils.adapters.input.pico4 import transform_pico4_to_robot_pose
     from utils.core.arm_controller import slerp_step
     from utils.core.body.ik import solve_pose_ik
     from utils.core.body.wrist_tracker import WristTracker
-    from utils.core.input_stream import TeleopInputStream
     from utils.core.quaternion import matrix_to_quaternion
-    from utils.robots.realman_rm75b_single import RealManRM75BSingleSpec
 
     clock = time if clock is None else clock
     if output_factory is None:
@@ -192,13 +306,25 @@ def run_motion(args, *, output_factory=None, input_factory=None, clock=None) -> 
 
     config = load_config(args.config)
     ctrl, inp = config["control"], config["input"]
-    spec = RealManRM75BSingleSpec()
+    spec = _hand_spec(args)
     model, data, addresses = _load_model(spec)
+    controller_mode = bool(getattr(args, "controller", False))
+    hand = getattr(args, "hand", "none")
 
     output, input_stream = None, None
     try:
         output = output_factory(config["network"]["right_ip"])
         output.connect()
+        hand_driver = None
+        if hand != "none":
+            if controller_mode:
+                # Controller tracking carries no hand landmarks; leave the hand
+                # and its port untouched.
+                print(f"--controller: the {hand} hand is not driven.", flush=True)
+            else:
+                # Before enable_motion: an unpowered tool port must stop the
+                # program while the arm is still idle.
+                hand_driver = (hand_driver_factory or _setup_hand)(output, args, spec, config)
         output.enable_motion()
 
         home = spec.arm_home_qpos(SIDE)
@@ -231,50 +357,84 @@ def run_motion(args, *, output_factory=None, input_factory=None, clock=None) -> 
             home=data.qpos[addresses].copy(),
         )
 
-        stream_args = argparse.Namespace(
-            input_source=args.input_source, avp_ip=args.avp_ip, port=args.port,
-            pico4_mode=inp.get("mode", "relay"),
-            pico4_relay_host=inp.get("relay_host", "127.0.0.1"),
-            pico4_relay_port=inp.get("relay_port", 63902),
-            pico4_port=inp.get("direct_port", 63901),
-            pico4_broadcast_port=inp.get("broadcast_port", 29888),
-        )
-        input_stream = (TeleopInputStream if input_factory is None else input_factory)(stream_args)
+        input_stream = _open_input_stream(args, inp, input_factory)
 
         print("MOTION ENABLED. Ctrl+C stops.", flush=True)
         print("Homing complete. Get into your start pose.", flush=True)
-        _wait_for_tracking(input_stream, arm, clock=clock)
-        _countdown()
-        # Capture which way the operator is facing right now, so "forward"
-        # means forward regardless of where they chose to stand. This also
-        # absorbs the arm's own mounting yaw: an operator naturally squares up
-        # to the arm, so the two offsets cancel without anyone measuring them.
-        yaw = _heading_yaw_rad(input_stream.get_pico4_head_pose())
-        if yaw is None:
+        if controller_mode:
+            # The grip is the readiness signal, so there is nothing to wait out.
             print(
-                "No headset pose; using the raw VR frame. Stand square to the arm.",
+                "Squeeze the grip to track, release to hold still and re-anchor. "
+                "Menu button exits.",
                 flush=True,
             )
         else:
-            print(f"Operator heading: {np.rad2deg(yaw):+.1f} deg; aligning to it.", flush=True)
-        arm.set_heading(yaw)
-        # The wait above already fed a sample into the tracker, which would
-        # have anchored on the pose held before the countdown. Drop it so the
-        # next sample -- the pose being held right now -- becomes the anchor.
-        arm.tracker.reset_input_reference()
-        arm.cmd_pos = data.site_xpos[arm.site_id].copy()
-        arm.cmd_quat = matrix_to_quaternion(data.site_xmat[arm.site_id].reshape(3, 3))
-        print("Tracking.", flush=True)
+            _wait_for_tracking(input_stream, arm, clock=clock)
+            _countdown()
+        def take_anchor(announce=True):
+            """Align to the operator's heading and forget the previous anchor.
+
+            The heading is read now, so "forward" means forward regardless of
+            where the operator chose to stand. It also absorbs the arm's own
+            mounting yaw: an operator naturally squares up to the arm, so the
+            two offsets cancel without anyone measuring them.
+            """
+            yaw = _heading_yaw_rad(input_stream.get_pico4_head_pose())
+            if announce:
+                if yaw is None:
+                    print(
+                        "No headset pose; using the raw VR frame. "
+                        "Stand square to the arm.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"Operator heading: {np.rad2deg(yaw):+.1f} deg; aligning to it.",
+                        flush=True,
+                    )
+            arm.set_heading(yaw)
+            # Any sample consumed before this point would have anchored on a
+            # stale pose, so drop it and let the next one become the anchor.
+            arm.tracker.reset_input_reference()
+            arm.cmd_pos = data.site_xpos[arm.site_id].copy()
+            arm.cmd_quat = matrix_to_quaternion(data.site_xmat[arm.site_id].reshape(3, 3))
+
+        clutch = _GripClutch()
+        if not controller_mode:
+            take_anchor()
+            print("Tracking.", flush=True)
         while True:
             loop_start = clock.monotonic()
-            # The absent left side is passed as None; poll_arms skips it.
-            result = input_stream.poll_arms(None, arm, None, allow_stop_gesture=True)
-            if result.stop_requested:
-                raise KeyboardInterrupt
-            if result.saw_valid_data:
-                arm.last_valid = loop_start
+            tracking = True
+            if controller_mode:
+                state = _controller_state(input_stream)
+                if state is not None:
+                    if state.get("menuButton", False):
+                        raise KeyboardInterrupt
+                    held, just_engaged = clutch.update(state.get("grip"))
+                    if just_engaged:
+                        take_anchor()
+                        print("Grip engaged; tracking.", flush=True)
+                    tracking = held
+                    if held:
+                        pose = state["pose"]
+                        arm.update_from_pose(
+                            *transform_pico4_to_robot_pose(pose[:3], pose[3:7])
+                        )
+                        arm.last_valid = loop_start
+                else:
+                    tracking = False
+            else:
+                # The absent left side is passed as None; poll_arms skips it.
+                result = input_stream.poll_arms(None, arm, None, allow_stop_gesture=True)
+                if result.stop_requested:
+                    raise KeyboardInterrupt
+                if result.saw_valid_data:
+                    arm.last_valid = loop_start
+                if hand_driver is not None:
+                    hand_driver.step(arm.latest_landmarks, loop_start)
 
-            if (arm.tracker.initialized
+            if (tracking and arm.tracker.initialized
                     and clock.monotonic() - arm.last_valid <= PACKET_TIMEOUT_S):
                 arm.cmd_pos += (arm.tracker.target_position - arm.cmd_pos) * ctrl["pos_gain"]
                 arm.cmd_quat = slerp_step(arm.cmd_quat, arm.tracker.target_quaternion, ctrl["rot_gain"])
@@ -331,6 +491,41 @@ def _yaw_matrix(yaw_rad):
     return np.array([[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]])
 
 
+class _GripClutch:
+    """The grip is a clutch: squeezing tracks, letting go releases.
+
+    This replaces the countdown in controller mode. The operator says when
+    they are ready by squeezing, so there is nothing to wait out, and letting
+    go re-anchors without restarting the program.
+    """
+
+    def __init__(self, *, engage=GRIP_ENGAGE):
+        self.engage = engage
+        self.engaged = False
+
+    def update(self, grip):
+        """Return (held, just_engaged) for this frame."""
+        try:
+            held = grip is not None and float(grip) > self.engage
+        except (TypeError, ValueError):
+            held = False
+        just_engaged = held and not self.engaged
+        self.engaged = held
+        return held, just_engaged
+
+
+def _controller_state(input_stream, side=SIDE):
+    """Latest controller state, or None when controllers are unavailable.
+
+    TeleopInputStream only forwards hand tracking, so the controller is read
+    straight from the Pico adapter underneath it.
+    """
+    pico = getattr(input_stream, "pico4_input", None)
+    if pico is None or not hasattr(pico, "get_controller"):
+        return None
+    return pico.get_controller(side)
+
+
 def _wait_for_tracking(input_stream, arm, *, clock=time, emit=print, timeout_s=0.0):
     """Block until wrist samples are actually arriving.
 
@@ -365,6 +560,99 @@ def _countdown(seconds=COUNTDOWN_S, *, sleep=time.sleep, emit=print):
     emit("Anchoring now; hold your start pose.")
 
 
+class _HandDriver:
+    """Retarget hand landmarks and send them to the tool port, sparingly.
+
+    Both the retarget optimisation and the tool-port write run inside the arm
+    loop, so both are held to ``rate_hz``; a target that has barely moved is
+    not resent. The hand simply holds its last target in between.
+    """
+
+    def __init__(self, *, retarget, to_channels, send, full_scale,
+                 rate_hz=HAND_RATE_HZ, min_change_fraction=HAND_MIN_CHANGE_FRACTION):
+        self._retarget = retarget
+        self._to_channels = to_channels
+        self._send = send
+        self._period = 1.0 / float(rate_hz)
+        self._min_change = float(full_scale) * float(min_change_fraction)
+        self._last_time = None
+        self._last_sent = None
+
+    def step(self, landmarks, now) -> bool:
+        """Return True when a target was actually sent."""
+        import numpy as np
+
+        if landmarks is None:
+            return False
+        if self._last_time is not None and now - self._last_time < self._period:
+            return False
+        self._last_time = now
+        raw = self._retarget(landmarks)
+        if raw is None or not np.all(np.isfinite(raw)):
+            return False
+        channels = self._to_channels(raw)
+        if self._last_sent is not None and max(
+            abs(a - b) for a, b in zip(channels, self._last_sent)
+        ) < self._min_change:
+            return False
+        self._send(channels)
+        self._last_sent = list(channels)
+        return True
+
+
+def _setup_hand(output, args, spec, config):
+    """Configure the tool port and build a driver for the selected hand.
+
+    Runs before any arm motion is enabled, so an unpowered tool port or a
+    missing retarget config stops the program while the arm is still idle.
+    """
+    sys.path.insert(1, str(ROOT / "third_party" / "AnyDexRetarget"))
+    from utils.adapters.output.inspire_mapping import raw_qpos_to_channels
+    from utils.adapters.output.realman_rm75b_single_real import (
+        INSPIRE_CHANNEL_MAX,
+        ROHAND_CHANNEL_MAX,
+    )
+    from utils.adapters.output.rohand_mapping import raw_qpos_to_positions
+    from utils.core.hand.retarget import HandRetargeter
+
+    kind = args.hand
+    settings = config["hands"].get(kind, {})
+    closed_is_max = settings.get("closed_is_max", True)
+    retargeter = HandRetargeter(spec.hand_config_path(args.input_source, SIDE), SIDE)
+    if not retargeter.available:
+        raise RuntimeError(f"{kind} hand retargeter unavailable")
+    output.configure_hand(
+        kind,
+        baudrate=settings.get("baudrate", 115200),
+        device_id=settings.get("device_id", 2),
+    )
+    output.enable_hand()
+    print(f"Hand: {kind} on the tool port ({output.tool_voltage()}).", flush=True)
+
+    def send(channels):
+        output.send_hand(channels, guard=_transport_guard)
+
+    if kind == "inspire":
+        full_scale = INSPIRE_CHANNEL_MAX
+
+        def to_channels(raw):
+            return raw_qpos_to_channels(raw, spec, scale=INSPIRE_CHANNEL_MAX)
+    else:
+        full_scale = ROHAND_CHANNEL_MAX
+        joint_names = retargeter.joint_names
+
+        def to_channels(raw):
+            return raw_qpos_to_positions(raw, joint_names, spec, closed_is_max=closed_is_max)
+
+    return _HandDriver(
+        retarget=retargeter.retarget_mediapipe,
+        to_channels=to_channels,
+        send=send,
+        full_scale=full_scale,
+        rate_hz=settings.get("rate_hz", HAND_RATE_HZ),
+    )
+
+
 class _ArmState:
     """Per-arm teleoperation state, shaped for TeleopInputStream.poll_arms."""
 
@@ -376,6 +664,9 @@ class _ArmState:
         self.cmd_quat = cmd_quat
         self.home = home
         self.last_valid = 0.0
+        # Latest wrist-relative hand landmarks, for the hand driver. Stored
+        # rather than retargeted here so the optimiser runs only at hand rate.
+        self.latest_landmarks = None
         # Rotation from the VR world frame into the operator's own heading,
         # captured from the headset at anchor time. Until it is set, samples
         # pass through unchanged.
@@ -405,6 +696,8 @@ class _ArmState:
         )
 
     def update_from_pose(self, position, quaternion):
+        if self.tracker is None:
+            return  # Hand-only mode: the arm is not tracked.
         if self._heading_rotation is not None:
             import numpy as np
 
@@ -416,8 +709,12 @@ class _ArmState:
             quaternion = quaternion_multiply(self._heading_quat, tuple(quaternion))
         self.tracker.update(position, quaternion)
 
-    def update_hand_from_mediapipe(self, _landmarks):
-        return False  # No end effector.
+    def update_hand_from_mediapipe(self, landmarks):
+        if landmarks is not None:
+            self.latest_landmarks = landmarks
+        # Not wrist data: hand landmarks alone must not keep a stale wrist
+        # pose looking fresh to the arm.
+        return False
 
     def update_hand_from_pinch(self, _distance):
         return False
@@ -443,7 +740,17 @@ def main(argv=None) -> int:
         "--enable-motion", action="store_true",
         help="Full teleoperation. THE ARM WILL MOVE.",
     )
+    mode.add_argument(
+        "--hand-only", action="store_true",
+        help="Drive only the --hand; the arm is never enabled. Use for a hand's "
+             "first power-up.",
+    )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--hand", choices=("none", "inspire", "rohand"), default="none",
+        help="Hand on the flange's tool port: none (default), inspire, or rohand "
+             "(OYMotion). Hand-tracking only; not driven with --controller.",
+    )
     parser.add_argument(
         "--input-source", choices=("pico4", "avp"), default="pico4",
         help="Tracking input source for --enable-motion (default: pico4)",
@@ -451,20 +758,33 @@ def main(argv=None) -> int:
     parser.add_argument("--avp-ip", default=None, help="Vision Pro IP for --input-source avp")
     parser.add_argument("--port", type=int, default=9000, help="Quest 3 UDP port")
     parser.add_argument(
+        "--controller", action="store_true",
+        help="Track the Pico controller instead of the bare hand: squeeze the "
+             "grip to track, release to hold still and re-anchor",
+    )
+    parser.add_argument(
         "--duration", type=float, default=0.0,
         help="Seconds to run in --read-only mode; 0 runs until interrupted",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    if args.input_source == "avp" and args.enable_motion and not args.avp_ip:
+    if args.input_source == "avp" and (args.enable_motion or args.hand_only) and not args.avp_ip:
         parser.error("--avp-ip is required with --input-source avp")
+    if args.controller and args.input_source != "pico4":
+        parser.error("--controller is only available with --input-source pico4")
+    if args.hand_only and args.hand == "none":
+        parser.error("--hand-only needs --hand inspire or --hand rohand")
+    if args.hand_only and args.controller:
+        parser.error("--hand-only uses hand tracking; --controller carries no hand data")
 
     previous = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     try:
         if args.read_only:
             return run_read_only(args)
+        if args.hand_only:
+            return run_hand_only(args)
         if args.enable_motion:
             return run_motion(args)
         return run_check(args)  # Default: the safest mode.
