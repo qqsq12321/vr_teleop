@@ -14,6 +14,8 @@
 | `teleop_sim.py --robot realman_rm75b --hand linker_l20` | RealMan RM75-B + Linker L20 | 仿真 | 仅仿真，无真机后端 |
 | `teleop_real.py` | RealMan RM75-B + Inspire RH56DFX | 实物 | 按 master 的 RM65 流程适配双臂七关节，先到初始姿态，再 Pico → IK → CANFD；无口令确认 |
 | `teleop_realman_real.py` | RealMan RM75-B + Inspire RH56DFX | 兼容调试入口 | 独立的旧检查/离线预览流程；日常真机入口不调用它 |
+| `teleop_sim.py --robot realman_rm75b_single` | 单臂 RM75-B（落地单臂）+ 可选 Inspire | 仿真 | `--hand none`（默认）或 `inspire`；**唯一开启胶囊避碰的机器人** |
+| `teleop_rm75b_single_real.py` | 单臂 RM75-B + 可选 Inspire | 实物 | RM_API2（**非** 双臂的旧 SDK），默认只做离线检查，需显式 `--enable-motion` |
 | `teleop_sim.py --robot cvte` | CVTE CARM D3 双臂 + 平行夹爪 | 仿真 | 捏合距离控制夹爪开合 |
 | `teleop_cvte_real.py` | CVTE CARM D3 双臂 + 平行夹爪 | 实物 | 官方 `carm` SDK（WebSocket）→ IK → `track_*_joint`；默认从当前姿态开始 |
 
@@ -120,6 +122,87 @@ python tools/build_realman_rm75b_l20_scene.py --check
   0.172m（Inspire 为 0.249m）。实测无接触（`ncon=0`），但余量比 Inspire 小。
 - **手部几何是纯视觉的**（`contype=0 conaffinity=0`），和臂场景里的 Inspire 一致，
   因此场景不会检测手指自碰撞。
+
+## 单臂 RM75-B（落地单臂，仿真 + 真机）
+
+立在地上的单条 RM75-B 七轴臂，法兰工具口可选接 Inspire RH56DFX 灵巧手。
+**与双臂路径完全分开**：自己的配置 `config/realman_rm75b_single_real.yaml`、
+自己的场景，没有双臂那套 J1 零位补偿。真机走 **RM_API2**
+（`pip install Robotic_Arm`），不是 `third_party/realman_api` 里的旧 SDK，两者不通用。
+
+### 仿真
+
+```bash
+conda activate vr_teleop
+python example/pico4_daemon.py                                    # 另一个终端，relay 模式需要
+python example/teleop_sim.py --robot realman_rm75b_single --hand inspire --input-source pico4
+```
+
+场景由 `tools/build_realman_rm75b_single_scene.py --hand {none,inspire,all}` 生成，
+已入库，重建不需要厂商 ROS 包。
+
+### 真机
+
+四种模式，按安全程度排序，**默认是最安全的 `--check`**：
+
+```bash
+# 1. 离线检查：不开任何 socket，校验初始姿态在限位内，打印将要下发的 SDK 角度
+python example/teleop_rm75b_single_real.py --check
+
+# 2. 只读：连上机械臂打印实测关节角，不使能、不下发运动
+python example/teleop_rm75b_single_real.py --read-only --duration 10
+
+# 3. 只驱动灵巧手：机械臂连上但不使能，用于手第一次上电
+python example/teleop_rm75b_single_real.py --hand-only --hand inspire
+
+# 4. 完整遥操（机械臂会动）
+python example/teleop_rm75b_single_real.py --enable-motion --hand inspire
+python example/teleop_rm75b_single_real.py --enable-motion --controller   # 手柄，握把键为死手开关
+```
+
+新装机器先跑 1、2 确认关节角正常，手第一次接上先跑 3，再放开到 4。
+
+手势模式下使能后要等追踪数据齐备，然后 3-2-1 倒数，倒数结束的那一帧作为位姿基准，
+并按头显朝向对齐"前方"，所以站位和朝向换了也不用重新标定。
+工具口电压**只读不设**，读到 0V 会拒绝启动（在示教器里设置）。
+`--controller` 模式不驱动灵巧手。
+
+### 自碰撞与地面避让
+
+**只有这台机器人开启**，其他机器人的 IK 一行未变（默认关闭时输出逐位相同）。
+实现在 `utils/core/capsule_collision.py`：每节连杆拟合一个胶囊，手拟合手掌和拇指两个，
+地面是一个水平半空间。
+
+- **软避让**：胶囊表面间隙进入 **5 cm** 后，IK 里加一个渐进弹簧把它们推开。
+  刚进入时几乎不推，越近越硬，所以是"让一下"而不是撞墙。
+- **硬兜底**：真机上若某一帧仍会越过 **5 mm** 间隙，就沿这一帧的动作二分到刚好 5 mm 停下，
+  而不是整帧丢弃，机械臂会沿障碍滑开而不是卡死。只有已经在 5 mm 以内还要往更深处走才原地不动。
+  终端打印 `Limiting:` 或 `Holding:`，最多每秒一次。
+- **关节限位**：解出的角度统一留 3° 余量（`mj_integratePos` 不会自己截断转动关节）。
+
+胶囊按每节最粗处拟合，所以比实际零件胖（金属填充 55%–60%，手只有 26%–38%）。
+实测胶囊间隙 5 mm 时真实金属还隔 33–38 mm：**偏保守，不会漏判**，代价是部分紧凑姿态会被提前推开。
+链上间隔小于 3 的配对不检查——相邻连杆共用轴承本来就贴着，间隔 2 的穷举扫描显示关节限位
+已经让它们至少隔 17 mm。
+
+地面高度由 spec 的 `collision_floor_z` 决定，默认 `0.0`（基座坐在地上）。
+装到底座或台子上要改这个值，设 `None` 关掉地面检查。
+软硬程度调 `utils/core/capsule_collision.py` 的 `weight`（默认 5，越大越硬）和 5 cm 影响距离。
+
+**看效果**（都不是运行机器人必须的）：
+
+```bash
+# 不用 VR：自动折向自身或压向地面，循环回放，画出胶囊；加 --no-avoid 对比
+python tools/view_capsule_avoidance.py --hand inspire
+python tools/view_capsule_avoidance.py --hand inspire --goal 0.5 0 -0.1 --no-avoid
+
+# 遥操时实时看胶囊（参数同对应入口）
+python tests/teleop_sim_capsules.py --hand inspire --input-source pico4
+python tests/teleop_real_capsules.py --enable-motion --hand inspire
+```
+
+颜色：绿=还远，橙=IK 正在推开，红=到硬线、这一帧不下发。
+仿真脚本可加 `--no-avoid` 关掉避让对比；真机脚本**故意没有**这个开关。
 
 ## CVTE CARM D3 双臂（仿真 + 真机）
 
@@ -344,6 +427,9 @@ python3 example/viz/visualize.py realman_l20
 python3 example/viz/visualize.py cvte
 # 或直接指定 XML
 python3 example/viz/visualize.py example/scene_config/scene_dexforce.xml
+
+# 单臂 RM75-B 碰撞避让回放（无需 VR，见上文"自碰撞与地面避让"）
+python tools/view_capsule_avoidance.py --hand inspire
 ```
 
 ## 项目结构
@@ -355,8 +441,9 @@ vr_teleop/
 │   │   ├── types.py               # 共享数据结构
 │   │   ├── quaternion.py          # 四元数运算 + 坐标变换
 │   │   ├── body/
-│   │   │   ├── ik.py              # 机械臂/本体 IK
+│   │   │   ├── ik.py              # 机械臂/本体 IK（可选碰撞避让、关节限位余量）
 │   │   │   └── wrist_tracker.py   # 腕部残差跟踪
+│   │   ├── capsule_collision.py   # 胶囊自碰撞 + 地面模型（仅单臂 RM75-B 启用）
 │   │   └── hand/
 │   │       └── retarget.py        # 灵巧手重定向
 │   ├── adapters/
@@ -370,7 +457,8 @@ vr_teleop/
 │   │       └── cvte_real.py       # CVTE D3 carm SDK 适配（限位、限速、故障锁存）
 │   └── robots/
 │       ├── dexforce.py            # DexForce 关节映射、home pose、配置路径
-│       └── cvte_carm_d3.py        # CVTE D3 关节名、home pose、控制器 IP
+│       ├── cvte_carm_d3.py        # CVTE D3 关节名、home pose、控制器 IP
+│       └── realman_rm75b_single.py # 单臂 RM75-B 关节名、home pose、碰撞胶囊链
 ├── assets/                      # 机器人/物体模型资产
 │   ├── arm_body/dexforce/          # DexForce 本体 mesh、贴图、URDF
 │   ├── arm_body/cvte_carm_d3/      # CVTE D3 厂商 URDF + STL
@@ -380,6 +468,7 @@ vr_teleop/
 │   ├── teleop_sim.py
 │   ├── teleop_real.py
 │   ├── teleop_cvte_real.py         # CVTE D3 真机入口
+│   ├── teleop_rm75b_single_real.py # 单臂 RM75-B 真机入口（RM_API2）
 │   ├── scene_config/               # MuJoCo XML 场景配置
 │   └── viz/visualize.py            # MuJoCo 场景查看器
 ├── third_party/                 # 第三方依赖
